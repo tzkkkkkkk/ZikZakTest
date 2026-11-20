@@ -45,7 +45,7 @@
   'use strict';
   const ZZ = window.ZZ = window.ZZ || {};
 
-  ZZ.VERSION = '0.3.1';
+  ZZ.VERSION = '0.4';
   ZZ.HZ = 60;          // pasos de lógica por segundo
   ZZ.PASOS = 300;      // cinco segundos
   ZZ.PW = 640;         // tamaño lógico de la pantalla de la tele
@@ -585,6 +585,10 @@
     western: {
       bajo: [45, 45, 45, 45, 41, 41, 43, 43, 45, 45], galope: true, onda: 'triangle',
       mel: [76, 0, 0, 0, 81, 0, 79, 0, 76, 0, 0, 0, 72, 0, 74, 0, 76, 0, 0, 0],
+    },
+    concurso: {
+      bajo: [48, 48, 53, 53, 55, 55, 48, 48, 55, 48], onda: 'square',
+      mel: [72, 76, 79, 76, 77, 81, 84, 81, 79, 83, 86, 83, 84, 79, 76, 72, 74, 77, 79, 84],
     },
     tiempo: {
       bajo: [41, 41, 46, 46, 48, 48, 41, 41, 48, 41], onda: 'triangle',
@@ -2120,6 +2124,141 @@
 //# sourceURL=zz/canales/western.js
 </script>
 <script>
+/* ZikZak · canal 4 · Concurso · ¡PULSA!
+   Un pulsador y una lámpara. Cuando la lámpara se pone verde, se toca. Quien toca antes, pierde.
+   Mide los reflejos: cuenta lo poco que se tarda. En los niveles altos la lámpara amaga en ámbar. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ, T = ZZ.tinta;
+
+  const NIV = [null,
+    { ini: [80, 170], falsas: 0 },
+    { ini: [110, 200], falsas: 1 },
+    { ini: [140, 225], falsas: 2 }];
+  const AMAGO = 14;        // pasos que dura un amago
+  const C = { fondo: '#3A2A8C', fondoS: '#2A1F5C', atril: '#19B5A5', atrilS: '#0E7F74', verde: '#3DDC6B', ambar: '#FF9F1C', apagada: '#6B5FA8' };
+
+  // --- lógica ---------------------------------------------------------------
+  function init(semilla, nivel) {
+    const rng = ZZ.azar(semilla), N = NIV[nivel];
+    const enc = rng.entero(N.ini[0], N.ini[1]);
+    const falsas = [];
+    for (let i = 0; i < N.falsas; i++) {
+      const a = 30 + i * 45, b = Math.min(a + 35, enc - 40 - (N.falsas - 1 - i) * 45);
+      falsas.push(rng.entero(a, Math.max(a, b)));
+    }
+    return { semilla, nivel, enc, falsas, pulsado: -1, antes: false, pts: 0, espera: 0, hecho: false, ev: [] };
+  }
+
+  const puntosDe = r => ZZ.lim(Math.round(1000 - Math.max(0, r - 9) * 22), 0, 1000);
+
+  function paso(e, entradas, n) {
+    if (e.falsas.indexOf(n) >= 0) e.ev.push({ t: 'amago' });
+    if (n === e.enc) e.ev.push({ t: 'luz' });
+    if (e.pulsado < 0) {
+      for (const en of entradas) {
+        if (en.t !== 'd') continue;
+        e.pulsado = n;
+        if (n < e.enc) { e.antes = true; e.pts = 0; e.ev.push({ t: 'antes' }); }
+        else { e.pts = puntosDe(n - e.enc); e.ev.push({ t: 'pulsa', r: n - e.enc, pts: e.pts }); }
+        break;
+      }
+    }
+    if (e.pulsado >= 0 && ++e.espera > 40) e.hecho = true;
+  }
+
+  function puntuacion(e) { return e.pulsado < 0 || e.antes ? 0 : e.pts; }
+
+  // Jugador de la casa: tarda en reaccionar y, si es flojo, pica en los amagos.
+  function casa(e, mem, rng, d, n) {
+    if (mem.paso === undefined) {
+      mem.paso = e.enc + ZZ.lim(Math.round(ZZ.mix(34, 13, d) + rng.campana() * ZZ.mix(8, 2, d)), 1, 80);
+      for (const f of e.falsas) if (rng() < ZZ.mix(0.3, 0, Math.min(1, d * 1.3))) { mem.paso = f + rng.entero(10, 20); break; }
+    }
+    return n === mem.paso && e.pulsado < 0 ? [{ t: 'd', x: 320, y: 560 }] : [];
+  }
+
+  // --- dibujo -----------------------------------------------------------------
+  function fondo(g) {
+    g.fillStyle = C.fondo; g.fillRect(0, 0, ZZ.PW, ZZ.PH);
+    g.fillStyle = T.trama(g, C.fondoS, 12, 3); g.fillRect(0, 0, ZZ.PW, 260);
+    // focos
+    for (const [x, a] of [[110, 0.35], [530, -0.35]]) {
+      g.save(); g.translate(x, -10); g.rotate(a);
+      g.globalAlpha = 0.16; T.poli(g, [[-26, 0], [26, 0], [150, 700], [-150, 700]]); T.pinta(g, T.AMARILLO, 0);
+      g.globalAlpha = 1; T.vol(g, c => T.rr(c, -34, 0, 68, 54, 10), T.TINTA, { dx: 0, dy: 0, w: 0 });
+      g.restore();
+    }
+    // suelo y atril
+    T.vol(g, c => T.rr(c, -20, 700, 680, 200, 0), C.fondoS, { sombra: '#1C1440', dx: 0, dy: 10, w: 7 });
+    T.vol(g, c => T.poli(c, [[150, 860], [190, 610], [450, 610], [490, 860]]), C.atril, { sombra: C.atrilS, dx: -14, dy: 0, w: 7 });
+    T.vol(g, c => T.rr(c, 150, 580, 340, 44, 12), C.atril, { sombra: C.atrilS, dx: 0, dy: -10, w: 7 });
+    T.estrella(g, 320, 760, 46, 20, 5, -0.3); T.pinta(g, T.AMARILLO, 6);
+  }
+  function lampara(g, color, fuerte, t) {
+    if (fuerte) {
+      g.save(); g.globalAlpha = 0.3 + 0.1 * Math.sin(t * 0.6);
+      T.circ(g, 320, 250, 150); T.pinta(g, color, 0);
+      g.restore();
+    }
+    T.vol(g, c => T.rr(c, 280, 330, 80, 40, 8), T.TINTA, { dx: 0, dy: 0, w: 0 });
+    T.vol(g, c => T.circ(c, 320, 250, 96), color, { sombra: T.oscuro(color, 0.25), dx: -12, dy: -12, w: 8 });
+    T.elip(g, 286, 212, 22, 13); T.pinta(g, '#FFFFFF', 0);
+  }
+  function pulsador(g, hundido) {
+    T.vol(g, c => T.elip(c, 320, 574, 124, 40), T.TINTA, { dx: 0, dy: 0, w: 0 });
+    const y = hundido ? 558 : 526;
+    T.vol(g, c => { c.beginPath(); c.ellipse(320, y, 104, 34, 0, Math.PI, 0); c.lineTo(424, 566); c.ellipse(320, 566, 104, 34, 0, 0, Math.PI); c.closePath(); }, T.ROJO, { sombra: T.oscuro(T.ROJO, 0.3), dx: -14, dy: 0, w: 7 });
+    T.elip(g, 320, y, 104, 34); T.pinta(g, T.ROJO, 7);
+    T.elip(g, 288, y - 8, 30, 8); T.pinta(g, '#FFFFFF', 0);
+  }
+
+  function dibuja(g, e, vis) {
+    const n = vis.n, t = vis.t;
+    T.capa(g, vis, 'concurso', fondo);
+    let color = C.apagada, fuerte = false;
+    for (const f of e.falsas) if (n >= f && n < f + AMAGO && (e.pulsado < 0 || e.pulsado >= f)) { color = C.ambar; fuerte = true; }
+    if (n >= e.enc && !e.antes) { color = C.verde; fuerte = true; }
+    if (e.antes) { color = T.ROJO; fuerte = true; }
+    lampara(g, color, fuerte, t);
+    if (color === C.verde) T.texto(g, '¡YA!', 320, 252, 78, { color: T.TINTA, w: 0 });
+    vis.ch.dibuja(g, 0);
+    pulsador(g, e.pulsado >= 0 && n - e.pulsado < 10);
+    vis.ch.dibuja(g, 1);
+  }
+
+  function efectos(e, vis, ev, son) {
+    for (const x of ev) {
+      if (x.t === 'luz') { son && son.acierto(); }
+      else if (x.t === 'amago') { son && son.golpe(); }
+      else if (x.t === 'pulsa') {
+        const bien = x.pts >= 700;
+        T.estrellas(vis.ch, 320, 520, bien ? 9 : 5, T.AMARILLO, 9, bien ? 20 : 14, 1);
+        vis.ch.mas({ tipo: 'anillo', x: 320, y: 540, r: 40, R: 200, w: 14, color: '#FFFFFF', vida: 16, capa: 1 });
+        T.palabra(vis.ch, (x.r / 60).toFixed(2).replace('.', ',') + ' s', 320, 120, bien ? T.AMARILLO : T.PAPEL, 64, 1);
+        T.palabra(vis.ch, bien ? '¡RAYO!' : x.pts >= 350 ? '¡VALE!' : '¡QUÉ PACHORRA!', 320, 440, bien ? T.AMARILLO : T.PAPEL, 46, 1);
+        vis.temblor = 7; vis.parada = 2;
+        son && son.golpe();
+      } else if (x.t === 'antes') {
+        T.palabra(vis.ch, '¡ANTES DE TIEMPO!', 320, 120, T.ROJO, 46, 1);
+        vis.temblor = 12;
+        son && son.fallo();
+      }
+    }
+  }
+
+  ZZ.canales.concurso = {
+    id: 'concurso', num: 4, nombre: 'CONCURSO', orden: '¡PULSA!',
+    pista: 'Toca cuando la lámpara se ponga verde',
+    rotulo: 'EN DIRECTO: «EL DEDO MÁS RÁPIDO»',
+    color: '#19B5A5', color2: T.VIOLETA, color3: T.AMARILLO,
+    animo: x => (x.t === 'pulsa' ? (x.pts >= 350 ? 1 : -1) : x.t === 'antes' ? -1 : 0),
+    init, paso, puntuacion, casa, dibuja, efectos,
+  };
+})();
+//# sourceURL=zz/canales/concurso.js
+</script>
+<script>
 /* ZikZak · tele
    El marco común: el aparato, la mecha de la cuenta atrás, las placas de los jugadores,
    la nieve del zapeo, la orden en letras gordas y los rótulos. */
@@ -2598,7 +2737,7 @@
 (function () {
   'use strict';
   const ZZ = window.ZZ, C = ZZ.codigo = {};
-  const IDS = ['cocina', 'tiempo', 'western'];      // este orden va dentro de los códigos: no se cambia
+  const IDS = ['cocina', 'tiempo', 'western', 'concurso'];      // este orden va dentro de los códigos: no se cambia
   const TIPOS = ['d', 'm', 'u'];
   const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 
