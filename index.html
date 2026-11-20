@@ -1,0 +1,3832 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body><title>ZikZak</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bowlby+One&family=Rubik:wght@700;900&display=swap">
+<style>
+  :root { --tinta: #17141F; color-scheme: dark; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--tinta); color: #FBF4E6; overflow: hidden; overscroll-behavior: none;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+    font-family: Rubik, "Trebuchet MS", "Segoe UI", sans-serif;
+  }
+  #marco {
+    position: fixed; inset: 0; box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: max(0px, env(safe-area-inset-left, 0px)); padding-right: max(0px, env(safe-area-inset-right, 0px));
+    background: var(--tinta);
+  }
+  #zz { display: block; width: 100%; height: 100%; touch-action: none; outline: none; }
+  #zzcod {
+    position: absolute; box-sizing: border-box; margin: 0; padding: 10px 12px; border: 4px solid #17141F; border-radius: 16px;
+    background: #FBF4E6; color: #17141F; font-family: ui-monospace, Menlo, Consolas, monospace; line-height: 1.25;
+    resize: none; outline: none; word-break: break-all; box-shadow: 0 6px 0 #17141F;
+    -webkit-user-select: text; user-select: text;
+  }
+  #zzcod[hidden] { display: none; }
+</style>
+<div id="marco"><canvas id="zz" role="img" aria-label="ZikZak: duelos de minijuegos de cinco segundos. Se juega tocando la pantalla."></canvas></div>
+<script>
+/* ZikZak · configuración
+   El servidor de tiempo real para jugar en directo fuera de claude.ai.
+   Es la dirección del proyecto y su clave PÚBLICA (la que va en cualquier app): no es un secreto. */
+(function () {
+  'use strict';
+  window.ZZ = window.ZZ || {};
+  window.ZZ.CONFIG = { supabase: { url: 'https://wsqfaeiqwhvcltweabke.supabase.co', clave: 'sb_publishable_7rm1mHujqkmH7wCpvRc_IA_rvstUpVb' } };
+})();
+//# sourceURL=zz/config.js
+</script>
+<script>
+/* ZikZak · núcleo
+   Azar con semilla, partida a paso fijo, repetición de una grabación y jugador de la casa.
+   Nada de este fichero toca la pantalla: es lo que más adelante correrá también en el servidor
+   para volver a jugar cada partida y comprobar la puntuación. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ = window.ZZ || {};
+
+  ZZ.VERSION = '0.3';
+  ZZ.HZ = 60;          // pasos de lógica por segundo
+  ZZ.PASOS = 300;      // cinco segundos
+  ZZ.PW = 640;         // tamaño lógico de la pantalla de la tele
+  ZZ.PH = 840;
+  ZZ.canales = {};
+
+  // --- utilidades ---------------------------------------------------------
+  ZZ.lim = (v, a, b) => (v < a ? a : v > b ? b : v);
+  ZZ.mix = (a, b, t) => a + (b - a) * t;
+  ZZ.e = {
+    out3: t => 1 - Math.pow(1 - t, 3),
+    in3: t => t * t * t,
+    io: t => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2),
+    outBack: t => { const c = 1.70158; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); },
+    outEl: t => (t <= 0 ? 0 : t >= 1 ? 1 : Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * (2 * Math.PI / 3)) + 1),
+    rebote: t => Math.sin(Math.min(1, t) * Math.PI),
+  };
+
+  // --- azar con semilla (mulberry32) ---------------------------------------
+  ZZ.azar = function (semilla) {
+    let a = semilla >>> 0;
+    const f = function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    f.entre = (x, y) => x + (y - x) * f();
+    f.entero = (x, y) => x + Math.floor(f() * (y - x + 1));
+    f.elige = l => l[Math.floor(f() * l.length)];
+    // Campana aproximada (suma de tres uniformes), media 0 y desviación cercana a 1.
+    f.campana = () => (f() + f() + f() - 1.5) * 2;
+    return f;
+  };
+
+  // --- una partida de un canal ---------------------------------------------
+  // Las entradas son { t: 'd' | 'm' | 'u', x, y } con coordenadas enteras de la pantalla de la tele.
+  class Partida {
+    constructor(canal, semilla, nivel) {
+      this.canal = canal;
+      this.semilla = semilla >>> 0;
+      this.nivel = nivel;
+      this.e = canal.init(this.semilla, nivel);
+      this.n = 0;
+      this.grab = [];
+      this.fin = false;
+      this.ev = [];
+    }
+    avanza(entradas) {
+      if (this.fin) { this.ev = []; return this.ev; }
+      const e = this.e;
+      for (const en of entradas) this.grab.push([this.n, en.t, en.x | 0, en.y | 0]);
+      e.ev = [];
+      this.canal.paso(e, entradas, this.n);
+      this.n++;
+      if (this.n >= ZZ.PASOS || e.hecho) this.fin = true;
+      this.ev = e.ev;
+      return this.ev;
+    }
+    puntos() { return this.canal.puntuacion(this.e); }
+  }
+  ZZ.Partida = Partida;
+
+  // --- repetir una grabación -----------------------------------------------
+  class Repeticion {
+    constructor(canal, semilla, nivel, grab) {
+      this.p = new Partida(canal, semilla, nivel);
+      this.g = grab || [];
+      this.i = 0;
+    }
+    avanza() {
+      const ent = [];
+      while (this.i < this.g.length && this.g[this.i][0] === this.p.n) {
+        const r = this.g[this.i++];
+        ent.push({ t: r[1], x: r[2], y: r[3] });
+      }
+      return this.p.avanza(ent);
+    }
+    hastaElFinal() { while (!this.p.fin) this.avanza(); return this.p.puntos(); }
+    get fin() { return this.p.fin; }
+    puntos() { return this.p.puntos(); }
+  }
+  ZZ.Repeticion = Repeticion;
+
+  // --- jugador de la casa ---------------------------------------------------
+  // Juega un canal con una destreza de 0 a 1 y devuelve la grabación de sus entradas.
+  // Es un rival de prueba hecho por programa: en la página se anuncia como tal, nunca como una persona.
+  ZZ.grabaCasa = function (canal, semilla, nivel, destreza) {
+    const p = new Partida(canal, semilla, nivel);
+    const rng = ZZ.azar((semilla ^ 0x9E3779B9) + Math.floor(destreza * 1000));
+    const mem = {};
+    while (!p.fin) p.avanza(canal.casa(p.e, mem, rng, destreza, p.n) || []);
+    return { grab: p.grab, puntos: p.puntos(), pasos: p.n };
+  };
+})();
+//# sourceURL=zz/nucleo.js
+</script>
+<script>
+/* ZikZak · tinta
+   El estilo común a todos los canales: trazo de tinta grueso, formas planas con una sola sombra,
+   tramas de puntos, letras gordas y partículas. Todo lo que se dibuja pasa por aquí. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ;
+  const T = ZZ.tinta = {};
+  const TAU = Math.PI * 2;
+
+  T.TINTA = '#17141F';
+  T.PAPEL = '#FBF4E6';
+  T.ROJO = '#FF3B4E';
+  T.AMARILLO = '#FFC928';
+  T.AZUL = '#2D6BFF';
+  T.MENTA = '#21C58E';
+  T.VIOLETA = '#7B4DFF';
+  T.F_GORDA = '"Bowlby One", "Arial Black", Impact, sans-serif';
+  T.F_UI = 'Rubik, "Trebuchet MS", "Segoe UI", sans-serif';
+
+  // --- color ----------------------------------------------------------------
+  const cacheMezcla = new Map();
+  function rgb(h) {
+    const n = parseInt(h.slice(1), 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  T.mezcla = function (a, b, t) {
+    const k = a + b + t;
+    let v = cacheMezcla.get(k);
+    if (v) return v;
+    const x = rgb(a), y = rgb(b);
+    v = '#' + [0, 1, 2].map(i => Math.round(x[i] + (y[i] - x[i]) * t).toString(16).padStart(2, '0')).join('');
+    cacheMezcla.set(k, v);
+    return v;
+  };
+  T.oscuro = (c, t = 0.26) => T.mezcla(c, T.TINTA, t);
+  T.claro = (c, t = 0.4) => T.mezcla(c, '#FFFFFF', t);
+
+  // --- caminos --------------------------------------------------------------
+  T.rr = function (g, x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    g.beginPath();
+    g.moveTo(x + r, y);
+    g.arcTo(x + w, y, x + w, y + h, r);
+    g.arcTo(x + w, y + h, x, y + h, r);
+    g.arcTo(x, y + h, x, y, r);
+    g.arcTo(x, y, x + w, y, r);
+    g.closePath();
+  };
+  T.circ = (g, x, y, r) => { g.beginPath(); g.arc(x, y, r, 0, TAU); };
+  T.elip = (g, x, y, rx, ry, rot = 0) => { g.beginPath(); g.ellipse(x, y, rx, ry, rot, 0, TAU); };
+  T.poli = function (g, pts) {
+    g.beginPath();
+    for (let i = 0; i < pts.length; i++) i ? g.lineTo(pts[i][0], pts[i][1]) : g.moveTo(pts[i][0], pts[i][1]);
+    g.closePath();
+  };
+  T.estrella = function (g, x, y, R, r, n, rot = 0) {
+    g.beginPath();
+    for (let i = 0; i < n * 2; i++) {
+      const a = rot + i * Math.PI / n - Math.PI / 2, rr = i % 2 ? r : R;
+      const px = x + Math.cos(a) * rr, py = y + Math.sin(a) * rr;
+      i ? g.lineTo(px, py) : g.moveTo(px, py);
+    }
+    g.closePath();
+  };
+
+  // --- relleno y trazo ------------------------------------------------------
+  T.pinta = function (g, relleno, w = 6, tinta = T.TINTA) {
+    if (relleno) { g.fillStyle = relleno; g.fill(); }
+    if (w > 0) {
+      g.lineWidth = w; g.strokeStyle = tinta; g.lineJoin = 'round'; g.lineCap = 'round';
+      g.stroke();
+    }
+  };
+  T.linea = function (g, w = 6, tinta = T.TINTA) {
+    g.lineWidth = w; g.strokeStyle = tinta; g.lineJoin = 'round'; g.lineCap = 'round';
+    g.stroke();
+  };
+
+  // Forma con volumen: color de base y una sola sombra en media luna abajo a la derecha.
+  // `camino` es una función que traza la forma en el contexto.
+  T.vol = function (g, camino, relleno, o) {
+    o = o || {};
+    const w = o.w === undefined ? 6 : o.w;
+    const dx = o.dx === undefined ? -7 : o.dx, dy = o.dy === undefined ? -9 : o.dy;
+    g.save();
+    camino(g);
+    g.fillStyle = o.sombra || T.oscuro(relleno);
+    g.fill();
+    g.clip();
+    g.translate(dx, dy);
+    camino(g);
+    g.fillStyle = relleno;
+    g.fill();
+    g.restore();
+    if (w > 0) { camino(g); T.linea(g, w, o.tinta || T.TINTA); }
+  };
+
+  // Sombra dura de pegatina: la misma forma, desplazada y en tinta.
+  T.sombra = function (g, camino, dx = 8, dy = 10, alfa = 1, color = T.TINTA, w = 6) {
+    g.save();
+    g.translate(dx, dy);
+    g.globalAlpha *= alfa;
+    camino(g);
+    g.fillStyle = color; g.fill();
+    if (w > 0) { g.lineWidth = w; g.strokeStyle = color; g.lineJoin = 'round'; g.stroke(); }
+    g.restore();
+  };
+
+  // Trazo con contorno: para brazos, cuerdas y todo lo que es una línea gorda.
+  T.tubo = function (g, camino, color, ancho, borde = 5) {
+    g.lineJoin = 'round'; g.lineCap = 'round';
+    camino(g); g.lineWidth = ancho + borde * 2; g.strokeStyle = T.TINTA; g.stroke();
+    camino(g); g.lineWidth = ancho; g.strokeStyle = color; g.stroke();
+  };
+
+  // --- texto ----------------------------------------------------------------
+  T.texto = function (g, s, x, y, tam, o) {
+    o = o || {};
+    g.save();
+    g.font = (o.peso ? o.peso + ' ' : '') + tam + 'px ' + (o.fuente || T.F_GORDA);
+    g.textAlign = o.al || 'center';
+    g.textBaseline = o.base || 'middle';
+    g.translate(x, y);
+    if (o.rot) g.rotate(o.rot);
+    if (o.esc !== undefined) g.scale(o.esc, o.escY === undefined ? o.esc : o.escY);
+    g.lineJoin = 'round';
+    const w = o.w === undefined ? Math.max(5, tam * 0.17) : o.w;
+    if (w > 0 && o.sombra !== false) {
+      const d = o.ds === undefined ? Math.max(3, tam * 0.075) : o.ds;
+      g.fillStyle = g.strokeStyle = o.cs || T.TINTA;
+      g.lineWidth = w;
+      g.strokeText(s, d, d * 1.25); g.fillText(s, d, d * 1.25);
+    }
+    if (w > 0) { g.strokeStyle = o.tinta || T.TINTA; g.lineWidth = w; g.strokeText(s, 0, 0); }
+    g.fillStyle = o.color || T.PAPEL;
+    g.fillText(s, 0, 0);
+    g.restore();
+  };
+  T.ancho = function (g, s, tam, fuente, peso) {
+    g.save();
+    g.font = (peso ? peso + ' ' : '') + tam + 'px ' + (fuente || T.F_GORDA);
+    const w = g.measureText(s).width;
+    g.restore();
+    return w;
+  };
+
+  // --- tramas ---------------------------------------------------------------
+  const cacheTrama = new Map();
+  // Trama de puntos al tresbolillo, como una impresión.
+  T.trama = function (g, color, paso = 14, r = 3) {
+    const k = color + '|' + paso + '|' + r;
+    let p = cacheTrama.get(k);
+    if (p) return p;
+    const c = document.createElement('canvas');
+    c.width = c.height = paso * 2;
+    const x = c.getContext('2d');
+    x.fillStyle = color;
+    for (const [px, py] of [[0, 0], [paso * 2, 0], [0, paso * 2], [paso * 2, paso * 2], [paso, paso]]) {
+      x.beginPath(); x.arc(px, py, r, 0, TAU); x.fill();
+    }
+    p = g.createPattern(c, 'repeat');
+    cacheTrama.set(k, p);
+    return p;
+  };
+  // Rayas en diagonal.
+  T.rayas = function (g, color, paso = 16, ancho = 6) {
+    const k = 'r' + color + '|' + paso + '|' + ancho;
+    let p = cacheTrama.get(k);
+    if (p) return p;
+    const c = document.createElement('canvas');
+    c.width = c.height = paso;
+    const x = c.getContext('2d');
+    x.strokeStyle = color; x.lineWidth = ancho; x.lineCap = 'square';
+    for (const d of [-paso, 0, paso]) { x.beginPath(); x.moveTo(d, paso); x.lineTo(d + paso, 0); x.stroke(); }
+    p = g.createPattern(c, 'repeat');
+    cacheTrama.set(k, p);
+    return p;
+  };
+
+  // Rayos que salen de un punto.
+  T.rayos = function (g, cx, cy, R, n, rot, color) {
+    g.fillStyle = color;
+    g.beginPath();
+    for (let i = 0; i < n; i++) {
+      const a = rot + i * TAU / n, b = a + TAU / n / 2;
+      g.moveTo(cx, cy);
+      g.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R);
+      g.lineTo(cx + Math.cos(b) * R, cy + Math.sin(b) * R);
+      g.closePath();
+    }
+    g.fill();
+  };
+
+  // Estallido de cómic (estrella irregular) detrás de una palabra.
+  T.estallido = function (g, x, y, R, n, rot, relleno, w = 6, semilla = 7) {
+    const rng = ZZ.azar(semilla);
+    g.beginPath();
+    for (let i = 0; i < n * 2; i++) {
+      const a = rot + i * Math.PI / n;
+      const rr = i % 2 ? R * (0.58 + rng() * 0.1) : R * (0.9 + rng() * 0.22);
+      const px = x + Math.cos(a) * rr, py = y + Math.sin(a) * rr * 0.86;
+      i ? g.lineTo(px, py) : g.moveTo(px, py);
+    }
+    g.closePath();
+    T.pinta(g, relleno, w);
+  };
+
+  // Capa fija guardada: el fondo de un canal se dibuja una vez y luego se copia.
+  T.capa = function (g, vis, clave, fn, w, h) {
+    const esc = vis.esc || 1, k = '_capa_' + clave;
+    w = w || ZZ.PW; h = h || ZZ.PH;
+    let c = vis[k];
+    if (!c || c._esc !== esc) {
+      c = document.createElement('canvas');
+      c.width = Math.ceil(w * esc); c.height = Math.ceil(h * esc);
+      c._esc = esc;
+      const x = c.getContext('2d');
+      x.scale(esc, esc);
+      fn(x);
+      vis[k] = c;
+    }
+    g.drawImage(c, 0, 0, w, h);
+  };
+
+  // --- partículas (solo dibujo; no deciden nada) -----------------------------
+  class Chispas {
+    constructor() { this.l = []; }
+    mas(p) {
+      p.t = 0; p.rot = p.rot || 0; p.vx = p.vx || 0; p.vy = p.vy || 0;
+      this.l.push(p);
+      if (this.l.length > 400) this.l.shift();
+      return p;
+    }
+    limpia() { this.l.length = 0; }
+    paso() {
+      const l = this.l;
+      for (let i = l.length - 1; i >= 0; i--) {
+        const p = l[i];
+        if (p.espera > 0) { p.espera--; continue; }
+        p.vy += p.g || 0;
+        if (p.roz) { p.vx *= p.roz; p.vy *= p.roz; }
+        p.x += p.vx; p.y += p.vy;
+        p.rot += p.vr || 0;
+        if (p.suelo !== undefined && p.y > p.suelo) { p.y = p.suelo; p.vy *= -0.45; p.vx *= 0.7; p.vr = (p.vr || 0) * 0.6; }
+        if (++p.t >= p.vida) l.splice(i, 1);
+      }
+    }
+    dibuja(g, capa) {
+      for (const p of this.l) {
+        if (p.espera > 0) continue;
+        if ((p.capa || 0) !== (capa || 0)) continue;
+        const k = p.t / p.vida;
+        g.save();
+        g.translate(p.x, p.y);
+        if (p.rot) g.rotate(p.rot);
+        switch (p.tipo) {
+          case 'confeti': {
+            const s = Math.cos(p.t * 0.35 + p.fase);
+            g.scale(1, s);
+            g.globalAlpha = k > 0.8 ? (1 - k) * 5 : 1;
+            g.fillStyle = p.color;
+            g.fillRect(-p.r, -p.r * 0.55, p.r * 2, p.r * 1.1);
+            g.strokeStyle = T.TINTA; g.lineWidth = 2.5; g.strokeRect(-p.r, -p.r * 0.55, p.r * 2, p.r * 1.1);
+            break;
+          }
+          case 'estrella': {
+            const s = k < 0.2 ? ZZ.e.outBack(k * 5) : 1 - ZZ.e.in3((k - 0.2) / 0.8);
+            T.estrella(g, 0, 0, p.r * s, p.r * s * 0.45, p.n || 5);
+            T.pinta(g, p.color, Math.max(2, p.r * 0.18));
+            break;
+          }
+          case 'polvo': {
+            const s = 0.5 + ZZ.e.out3(k) * 0.9;
+            g.globalAlpha = 1 - ZZ.e.in3(k);
+            T.circ(g, 0, 0, p.r * s);
+            T.pinta(g, p.color, p.w === undefined ? 4 : p.w);
+            break;
+          }
+          case 'anillo': {
+            g.globalAlpha = 1 - k;
+            T.circ(g, 0, 0, p.r + (p.R - p.r) * ZZ.e.out3(k));
+            T.linea(g, (p.w || 10) * (1 - k) + 1, p.color);
+            break;
+          }
+          case 'raya': {
+            g.globalAlpha = 1 - ZZ.e.in3(k);
+            g.beginPath(); g.moveTo(0, 0); g.lineTo(p.l * (1 - k * 0.5), 0);
+            T.linea(g, p.w || 6, p.color);
+            break;
+          }
+          case 'texto': {
+            const s = k < 0.18 ? ZZ.e.outBack(k / 0.18) : 1;
+            g.globalAlpha = k > 0.75 ? (1 - k) * 4 : 1;
+            if (p.placa) {
+              // una placa de tinta detrás: la palabra se lee sobre cualquier fondo
+              const an = T.ancho(g, p.txt, p.r) + p.r * 0.9;
+              g.save(); g.scale(s, s);
+              T.rr(g, -an / 2, -p.r * 0.72, an, p.r * 1.44, p.r * 0.3); T.pinta(g, T.TINTA, 0);
+              g.restore();
+            }
+            T.texto(g, p.txt, 0, 0, p.r, { color: p.color, esc: s, w: p.placa ? 0 : p.w, fuente: p.fuente });
+            break;
+          }
+          case 'dib': p.dib(g, p, k); break;
+        }
+        g.restore();
+      }
+    }
+  }
+  T.Chispas = Chispas;
+
+  // Emisores de uso común.
+  T.confeti = function (ch, x, y, n, colores, fuerza = 9, capa = 0) {
+    for (let i = 0; i < n; i++) {
+      const a = -Math.PI / 2 + (Math.random() - 0.5) * 2.4, v = fuerza * (0.5 + Math.random());
+      ch.mas({ tipo: 'confeti', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, g: 0.42, roz: 0.985,
+        vr: (Math.random() - 0.5) * 0.4, r: 6 + Math.random() * 6, color: colores[i % colores.length],
+        fase: Math.random() * 6, vida: 50 + Math.random() * 40, capa });
+    }
+  };
+  T.estrellas = function (ch, x, y, n, color, fuerza = 8, r = 16, capa = 0) {
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * TAU + Math.random() * 0.5, v = fuerza * (0.7 + Math.random() * 0.6);
+      ch.mas({ tipo: 'estrella', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, roz: 0.9,
+        vr: (Math.random() - 0.5) * 0.3, r: r * (0.7 + Math.random() * 0.6), color, vida: 22 + Math.random() * 12, capa });
+    }
+  };
+  T.polvo = function (ch, x, y, n, color, fuerza = 4, r = 12, capa = 0) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * TAU, v = fuerza * (0.4 + Math.random());
+      ch.mas({ tipo: 'polvo', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v * 0.6 - 0.6, roz: 0.9,
+        r: r * (0.6 + Math.random() * 0.8), color, vida: 18 + Math.random() * 12, capa });
+    }
+  };
+  T.rayitas = function (ch, x, y, n, color, largo = 34, radio = 30, capa = 0) {
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * TAU + Math.random() * 0.3;
+      ch.mas({ tipo: 'raya', x: x + Math.cos(a) * radio, y: y + Math.sin(a) * radio, rot: a,
+        vx: Math.cos(a) * 3, vy: Math.sin(a) * 3, roz: 0.85, l: largo, w: 6, color, vida: 12, capa });
+    }
+  };
+  T.palabra = function (ch, txt, x, y, color, tam = 46, capa = 0, placa = false) {
+    for (const p of ch.l) if (p.tipo === 'texto' && p.vida - p.t > 5) { p.t = Math.max(p.t, Math.round(p.vida * 0.8)); p.vida = p.t + 5; }
+    return ch.mas({ tipo: 'texto', txt, x, y, vy: -1.6, roz: 0.94, rot: (Math.random() - 0.5) * 0.24,
+      r: tam, color, vida: 42, capa, placa });
+  };
+})();
+//# sourceURL=zz/tinta.js
+</script>
+<script>
+/* ZikZak · sonido
+   Todo sale de osciladores y ruido: no hay ficheros de audio. Empieza a sonar tras el primer toque,
+   que es cuando el navegador lo permite. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ;
+  const S = ZZ.son = {};
+  let ac = null, salida = null, mudo = false, ruidoBuf = null, musica = null;
+
+  S.mudo = () => mudo;
+  S.pon = function (v) { mudo = !!v; if (salida) salida.gain.value = mudo ? 0 : 0.85; };
+  S.inicia = function () {
+    if (ac) { if (ac.state === 'suspended') ac.resume(); return; }
+    const C = window.AudioContext || window.webkitAudioContext;
+    if (!C) return;
+    try { ac = new C(); } catch (e) { ac = null; return; }
+    salida = ac.createGain(); salida.gain.value = mudo ? 0 : 0.85;
+    const comp = ac.createDynamicsCompressor();
+    salida.connect(comp); comp.connect(ac.destination);
+    ruidoBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
+    const d = ruidoBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  };
+
+  function tono(f, dur, o) {
+    if (!ac || mudo) return;
+    o = o || {};
+    const t = ac.currentTime + (o.t0 || 0);
+    const osc = ac.createOscillator(), gn = ac.createGain();
+    osc.type = o.tipo || 'square';
+    osc.frequency.setValueAtTime(f, t);
+    if (o.hasta) osc.frequency.exponentialRampToValueAtTime(o.hasta, t + dur);
+    const v = o.vol === undefined ? 0.18 : o.vol;
+    gn.gain.setValueAtTime(0.0001, t);
+    gn.gain.exponentialRampToValueAtTime(v, t + (o.ataque || 0.006));
+    gn.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(gn); gn.connect(o.dest || salida);
+    osc.start(t); osc.stop(t + dur + 0.03);
+  }
+  function ruido(dur, o) {
+    if (!ac || mudo) return;
+    o = o || {};
+    const t = ac.currentTime + (o.t0 || 0);
+    const src = ac.createBufferSource(); src.buffer = ruidoBuf; src.loop = true;
+    const fl = ac.createBiquadFilter(); fl.type = o.filtro || 'bandpass';
+    fl.frequency.setValueAtTime(o.f || 1200, t);
+    if (o.hasta) fl.frequency.exponentialRampToValueAtTime(o.hasta, t + dur);
+    fl.Q.value = o.q || 1;
+    const gn = ac.createGain(), v = o.vol === undefined ? 0.3 : o.vol;
+    gn.gain.setValueAtTime(v, t); gn.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(fl); fl.connect(gn); gn.connect(salida);
+    src.start(t, Math.random() * 0.5); src.stop(t + dur + 0.03);
+  }
+  const serie = (notas, paso, o) => notas.forEach((f, i) => f && tono(f, (o.dur || paso * 1.6), Object.assign({}, o, { t0: i * paso })));
+
+  // --- efectos ------------------------------------------------------------------
+  S.zap = () => { ruido(0.34, { f: 3200, hasta: 500, vol: 0.34, q: 0.7 }); tono(150, 0.12, { tipo: 'sawtooth', hasta: 55, vol: 0.16 }); };
+  S.boton = () => { tono(660, 0.06, { vol: 0.1 }); tono(990, 0.09, { t0: 0.05, vol: 0.09 }); };
+  S.orden = () => { tono(196, 0.22, { tipo: 'sawtooth', hasta: 98, vol: 0.22 }); ruido(0.16, { f: 900, hasta: 200, vol: 0.3, filtro: 'lowpass' }); };
+  S.corte = () => { ruido(0.07, { f: 2600, vol: 0.26, filtro: 'highpass' }); tono(170, 0.1, { tipo: 'triangle', hasta: 70, vol: 0.4 }); };
+  S.clavado = () => { tono(1318, 0.12, { tipo: 'triangle', vol: 0.2 }); tono(1760, 0.22, { tipo: 'triangle', t0: 0.07, vol: 0.2 }); };
+  S.acierto = () => tono(988, 0.13, { tipo: 'triangle', vol: 0.2 });
+  S.golpe = () => tono(660, 0.08, { tipo: 'triangle', vol: 0.14 });
+  S.fallo = () => tono(185, 0.24, { tipo: 'sawtooth', hasta: 92, vol: 0.17 });
+  S.tiro = () => { ruido(0.2, { f: 1900, hasta: 280, vol: 0.5, q: 0.5 }); tono(230, 0.15, { hasta: 48, vol: 0.22 }); };
+  S.lata = () => { tono(1480, 0.16, { vol: 0.1 }); tono(2217, 0.24, { tipo: 'triangle', vol: 0.13, t0: 0.012 }); };
+  S.cacareo = () => { tono(700, 0.07, { tipo: 'sawtooth', hasta: 900, vol: 0.14 }); tono(560, 0.16, { tipo: 'sawtooth', hasta: 380, vol: 0.14, t0: 0.08 }); };
+  S.agarra = () => tono(520, 0.05, { tipo: 'sine', vol: 0.14 });
+  S.soplo = () => ruido(0.28, { f: 500, hasta: 2600, vol: 0.22, q: 1.3 });
+  S.sol = () => serie([523, 659, 784, 1047, 1319], 0.065, { tipo: 'triangle', vol: 0.18, dur: 0.2 });
+  S.tic = () => tono(1250, 0.035, { vol: 0.07 });
+  S.pum = () => { ruido(0.45, { f: 500, hasta: 50, vol: 0.6, filtro: 'lowpass' }); tono(110, 0.3, { tipo: 'triangle', hasta: 40, vol: 0.4 }); };
+  S.hecho = () => serie([784, 1047], 0.08, { tipo: 'triangle', vol: 0.18, dur: 0.16 });
+  S.cuenta = () => tono(880, 0.03, { tipo: 'triangle', vol: 0.06 });
+  S.punto = () => serie([659, 784, 1047], 0.07, { tipo: 'square', vol: 0.11, dur: 0.14 });
+  S.sinPunto = () => serie([330, 262], 0.12, { tipo: 'sawtooth', vol: 0.12, dur: 0.2 });
+  S.gana = () => serie([523, 659, 784, 1047, 0, 784, 1047, 1319], 0.1, { tipo: 'square', vol: 0.12, dur: 0.22 });
+  S.pierde = () => serie([392, 370, 330, 294, 262], 0.16, { tipo: 'sawtooth', vol: 0.1, dur: 0.3 });
+  S.cara = () => { tono(300, 0.1, { tipo: 'sine', hasta: 600, vol: 0.12 }); };
+
+  // --- sintonías: cinco segundos por canal -------------------------------------------
+  const hz = n => 440 * Math.pow(2, (n - 69) / 12);
+  const SINT = {
+    cocina: {
+      bajo: [48, 43, 48, 43, 53, 48, 43, 43, 48, 48], onda: 'square',
+      mel: [76, 79, 81, 79, 76, 72, 74, 76, 77, 81, 79, 76, 74, 72, 74, 67, 72, 76, 79, 84],
+    },
+    western: {
+      bajo: [45, 45, 45, 45, 41, 41, 43, 43, 45, 45], galope: true, onda: 'triangle',
+      mel: [76, 0, 0, 0, 81, 0, 79, 0, 76, 0, 0, 0, 72, 0, 74, 0, 76, 0, 0, 0],
+    },
+    tiempo: {
+      bajo: [41, 41, 46, 46, 48, 48, 41, 41, 48, 41], onda: 'triangle',
+      mel: [65, 69, 72, 77, 81, 77, 72, 69, 70, 74, 77, 82, 79, 76, 72, 76, 77, 81, 84, 89],
+    },
+  };
+  S.sintonia = function (id) {
+    S.calla();
+    const m = SINT[id];
+    if (!ac || mudo || !m) return;
+    const gn = ac.createGain(); gn.gain.value = 1; gn.connect(salida);
+    musica = gn;
+    m.bajo.forEach((n, i) => {
+      if (m.galope) {
+        tono(hz(n), 0.2, { tipo: 'triangle', vol: 0.2, t0: i * 0.5, dest: gn });
+        tono(hz(n), 0.1, { tipo: 'triangle', vol: 0.16, t0: i * 0.5 + 0.25, dest: gn });
+        tono(hz(n + 7), 0.1, { tipo: 'triangle', vol: 0.16, t0: i * 0.5 + 0.375, dest: gn });
+      } else {
+        tono(hz(n), 0.3, { tipo: 'triangle', vol: 0.22, t0: i * 0.5, dest: gn });
+        tono(hz(n + 12), 0.12, { tipo: 'triangle', vol: 0.1, t0: i * 0.5 + 0.25, dest: gn });
+      }
+    });
+    m.mel.forEach((n, i) => {
+      if (!n) return;
+      let largo = 1;
+      while (i + largo < m.mel.length && !m.mel[i + largo]) largo++;
+      tono(hz(n), 0.25 * largo * 0.92, { tipo: m.onda, vol: m.onda === 'square' ? 0.045 : 0.1, t0: i * 0.25, dest: gn, ataque: 0.012 });
+    });
+  };
+  S.calla = function () {
+    if (!musica || !ac) return;
+    try { musica.gain.setTargetAtTime(0, ac.currentTime, 0.03); } catch (e) { /* nada */ }
+    const m = musica; musica = null;
+    setTimeout(() => { try { m.disconnect(); } catch (e) { /* nada */ } }, 300);
+  };
+})();
+//# sourceURL=zz/sonido.js
+</script>
+<script>
+/* ZikZak · personaje
+   Cabeza grande, cuerpo pequeño y manos. Cada pinta tiene su forma de cabeza, sus ojos, su ropa
+   y su calzado: no es la misma cara con otro gorro. El cuerpo actúa: se inclina, se encoge y celebra.
+   Ajuste, el rival de la casa, es una carta de ajuste con esmoquin: se ve que no es una persona. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ, T = ZZ.tinta;
+  const P = ZZ.personaje = {};
+
+  P.PIELES = ['#F6C9A0', '#E3A574', '#B9773F', '#8A5530'];
+  P.PINTAS = [
+    { piel: 1, forma: 'redonda', ojos: 'punto', nariz: 'u', pelo: 'corto', cPelo: '#2B2536', gorro: 'gorra', cGorro: T.ROJO,
+      ropa: 'chandal', chaqueta: T.AZUL, pantalon: '#22357A', calzado: 'zapatilla', colorete: true, flequillo: true, tirita: true,
+      gestos: { reto: ['reto', 'tension'], gana: ['victoria', 'euforico'], pierde: ['derrota', 'triste'] } },
+    { piel: 2, forma: 'pera', ojos: 'redondo', nariz: 'bola', pelo: 'rizos', cPelo: '#6A3B1C', gorro: 'cinta', cGorro: T.AMARILLO,
+      ropa: 'sudadera', chaqueta: T.MENTA, pantalon: '#2B2536', calzado: 'zapatilla',
+      gestos: { reto: ['listo', 'contento'], gana: ['dosArriba', 'euforico'], pierde: ['palma', 'triste'] } },
+    { piel: 0, forma: 'alargada', ojos: 'gafas', nariz: 'ele', pelo: 'melena', cPelo: '#C2491D', gorro: 'lana', cGorro: T.VIOLETA,
+      ropa: 'abrigo', chaqueta: T.AMARILLO, cBufanda: T.ROJO, pantalon: '#4A3C82', calzado: 'bota', colorete: true,
+      gestos: { reto: ['gafas', 'neutro'], gana: ['saludoAlto', 'contento'], pierde: ['derrota', 'susto'] } },
+    { piel: 3, forma: 'cuadrada', ojos: 'entornado', nariz: 'bola', bigote: true, pelo: 'corto', cPelo: '#17141F', gorro: 'vaquero', cGorro: '#C9803A',
+      ropa: 'chaleco', chaqueta: T.ROJO, mangas: T.PAPEL, pantalon: '#3A5FA8', calzado: 'bota',
+      gestos: { reto: ['ala', 'neutro'], gana: ['ala2', 'contento'], pierde: ['derrota', 'enfadado'] } },
+    { piel: 0, forma: 'redonda', ojos: 'punto', nariz: 'u', pecas: true, pelo: 'coleta', cPelo: '#F0B93A', gorro: 'chef', cGorro: T.PAPEL,
+      ropa: 'chaquetilla', chaqueta: T.PAPEL, pantalon: '#2B2536', calzado: 'zueco', colorete: true,
+      gestos: { reto: ['cruzado', 'enfadado'], gana: ['dosArriba', 'euforico'], pierde: ['manosCabeza', 'susto'] } },
+  ];
+  P.AJUSTE = { tele: true, ropa: 'esmoquin', chaqueta: T.PAPEL, pantalon: '#2B2536', calzado: 'zapatilla',
+    gestos: { reto: ['saludo', 'contento'], gana: ['dosArriba', 'euforico'], pierde: ['derrota', 'triste'] } };
+  // El gesto de cada pinta en cada momento: [pose, expresión].
+  P.gesto = (a, cual) => (a.gestos && a.gestos[cual]) || { reto: ['reto', 'tension'], gana: ['victoria', 'euforico'], pierde: ['derrota', 'triste'] }[cual];
+
+  const EX = {
+    neutro: { ceja: 0, cy: 0, parp: 0.1, boca: 'sonrisa' },
+    contento: { ceja: -0.12, cy: -3, parp: 0, boca: 'abierta' },
+    euforico: { ceja: -0.2, cy: -6, boca: 'grande', arcos: true },
+    enfadado: { ceja: 0.5, cy: 5, parp: 0.3, boca: 'dientes' },
+    susto: { ceja: -0.28, cy: -8, parp: 0, boca: 'o', susto: true },
+    triste: { ceja: -0.5, cy: 1, parp: 0.3, boca: 'pena' },
+    tension: { ceja: 0.25, cy: 3, parp: 0.16, boca: 'lengua' },
+  };
+  const FORMAS = {
+    redonda: { w: 54, t: -58, b: 52, kt: 30, kb: 32, cy: -4, oreja: 12 },
+    pera: { w: 46, t: -56, b: 56, kt: 24, kb: 44, cy: 6, wb: 63, oreja: 10 },
+    alargada: { w: 46, t: -68, b: 62, kt: 27, kb: 26, cy: -6, oreja: 11 },
+    cuadrada: { w: 57, t: -54, b: 52, kt: 50, kb: 49, cy: -2, oreja: 14 },
+  };
+  function caminoCabeza(c, f) {
+    const wb = f.wb || f.w, ym = f.cy + (f.b - f.cy) * 0.62, yt = f.t + (f.cy - f.t) * 0.2;
+    c.beginPath(); c.moveTo(-f.w, f.cy);
+    c.bezierCurveTo(-f.w, yt, -f.kt, f.t, 0, f.t); c.bezierCurveTo(f.kt, f.t, f.w, yt, f.w, f.cy);
+    c.bezierCurveTo(wb, ym, f.kb, f.b, 0, f.b); c.bezierCurveTo(-f.kb, f.b, -wb, ym, -f.w, f.cy);
+    c.closePath();
+  }
+
+  // --- cara -----------------------------------------------------------------
+  // o: { ex, ey, by, piel, mira: {x,y}, ojos, nariz, bigote, pecas }
+  function cara(g, expr, t, o) {
+    const E = EX[expr] || EX.neutro;
+    const ex = o.ex, ey = o.ey, mira = o.mira || { x: 0, y: 0 };
+    const estilo = o.ojos || 'blanco';
+    const parpadeo = (t % 190) < 6 && !E.arcos;
+    for (const s of [-1, 1]) {
+      const x = s * ex;
+      if (estilo === 'gafas') {
+        T.circ(g, x, ey, 16.5); T.pinta(g, '#EAF6FF', 0);
+      }
+      if (E.arcos || parpadeo) {
+        g.beginPath();
+        if (E.arcos) { g.moveTo(x - 11, ey + 5); g.quadraticCurveTo(x, ey - 12, x + 11, ey + 5); }
+        else { g.moveTo(x - 11, ey + 1); g.quadraticCurveTo(x, ey + 7, x + 11, ey + 1); }
+        T.linea(g, 5.5);
+      } else if (E.susto) {
+        T.circ(g, x, ey, 12.5); T.pinta(g, '#FFFFFF', 3.5);
+        T.circ(g, x + mira.x * 3, ey + mira.y * 3, 4.2); T.pinta(g, T.TINTA, 0);
+      } else if (estilo === 'punto' || estilo === 'gafas' || estilo === 'redondo') {
+        // ojo de tinta, sin blanco: se lee a cualquier tamaño
+        const rx = estilo === 'gafas' ? 5.2 : estilo === 'redondo' ? 8.4 : 6.6, ry = estilo === 'gafas' ? 7.4 : estilo === 'redondo' ? 8.4 : 9.8;
+        if (estilo === 'redondo') { g.beginPath(); g.moveTo(x - 10, ey + 14); g.quadraticCurveTo(x, ey + 18, x + 10, ey + 14); T.linea(g, 3, T.oscuro(o.piel, 0.4)); }
+        const px = x + mira.x * 3.4, py = ey + 1 + mira.y * 3.4;
+        T.elip(g, px, py, rx, ry); T.pinta(g, T.TINTA, 0);
+        T.circ(g, px - rx * 0.32, py - ry * 0.38, rx * 0.36); T.pinta(g, '#FFFFFF', 0);
+        if (E.parp > 0.18) {
+          // el párpado corta el ojo por arriba, inclinado según el ánimo
+          const yb = py - ry + ry * 2 * E.parp, inc = E.ceja * 7 * s;
+          g.beginPath(); g.moveTo(px - rx - 3, py - ry - 4); g.lineTo(px + rx + 3, py - ry - 4);
+          g.lineTo(px + rx + 3, yb + inc); g.lineTo(px - rx - 3, yb - inc); g.closePath();
+          T.pinta(g, estilo === 'gafas' ? '#EAF6FF' : o.piel, 0);
+        }
+      } else {
+        // ojo con blanco; «entornado» lo lleva siempre medio cerrado
+        const ent = estilo === 'entornado';
+        const rx = ent ? 11.5 : 11, ry = ent ? 10 : 13;
+        const camOjo = c => T.elip(c, x, ey, rx, ry);
+        camOjo(g); T.pinta(g, '#FFFFFF', 0);
+        g.save(); camOjo(g); g.clip();
+        T.circ(g, x + mira.x * 4, ey + 1.5 + mira.y * 4, ent ? 5.6 : 6.2); T.pinta(g, T.TINTA, 0);
+        T.circ(g, x + mira.x * 4 - 2.2, ey - 1 + mira.y * 4, 2); T.pinta(g, '#FFFFFF', 0);
+        const parp = Math.max(E.parp || 0, ent ? 0.36 : 0);
+        if (parp > 0.02) {
+          const yb = ey - ry + ry * 2 * parp, inc = E.ceja * 8 * s;
+          g.beginPath(); g.moveTo(x - 16, ey - 22); g.lineTo(x + 16, ey - 22);
+          g.lineTo(x + 16, yb + inc); g.lineTo(x - 16, yb - inc); g.closePath();
+          T.pinta(g, o.piel, 3);
+        }
+        g.restore();
+        camOjo(g); T.linea(g, 3);
+      }
+      if (estilo === 'gafas') { T.circ(g, x, ey, 16.5); T.linea(g, 4.5); }
+      // ceja
+      const yc = ey - (estilo === 'gafas' ? 26 : 23) + (E.cy || 0);
+      g.beginPath();
+      g.moveTo(x - s * 11, yc + E.ceja * 12);
+      g.quadraticCurveTo(x + s * 1, yc - 3 - Math.abs(E.ceja) * 2, x + s * 13, yc - E.ceja * 7);
+      T.linea(g, estilo === 'entornado' ? 8 : 6);
+    }
+    if (estilo === 'gafas') {
+      g.beginPath(); g.moveTo(-ex + 16, ey - 2); g.quadraticCurveTo(0, ey - 8, ex - 16, ey - 2); T.linea(g, 4.5);
+    }
+    if (o.pecas) {
+      g.fillStyle = T.oscuro(o.piel, 0.32);
+      for (const [x, y] of [[-30, 10], [-23, 15], [-34, 17], [30, 10], [23, 15], [34, 17]]) { T.circ(g, x, y, 2.3); g.fill(); }
+    }
+    const tono = T.oscuro(o.piel, 0.5);
+    if (o.nariz === 'bola') { T.vol(g, c => T.elip(c, 0, o.by - 17, 8, 6.5), T.oscuro(o.piel, 0.12), { sombra: T.oscuro(o.piel, 0.3), dx: -1, dy: -2, w: 3.5 }); }
+    else if (o.nariz === 'ele') { g.beginPath(); g.moveTo(1, o.by - 30); g.lineTo(-3, o.by - 15); g.lineTo(5, o.by - 15); T.linea(g, 4, tono); }
+    else if (o.nariz === 'u') { g.beginPath(); g.moveTo(-4, o.by - 21); g.quadraticCurveTo(0.5, o.by - 14, 5.5, o.by - 21); T.linea(g, 4, tono); }
+    if (o.bigote) {
+      T.vol(g, c => { c.beginPath(); c.moveTo(0, o.by - 11); c.bezierCurveTo(10, o.by - 16, 24, o.by - 10, 27, o.by - 2); c.bezierCurveTo(16, o.by - 4, 8, o.by - 1, 0, o.by - 5); c.bezierCurveTo(-8, o.by - 1, -16, o.by - 4, -27, o.by - 2); c.bezierCurveTo(-24, o.by - 10, -10, o.by - 16, 0, o.by - 11); c.closePath(); }, '#2B2536', { sombra: T.TINTA, dx: 0, dy: -2, w: 3 });
+      boca(g, E.boca, o.by + 6, 0.82);
+    } else boca(g, E.boca, o.by, 1);
+  }
+  P.cara = cara;
+
+  function boca(g, tipo, y, k) {
+    g.save(); g.translate(0, y); g.scale(k, k);
+    switch (tipo) {
+      case 'abierta': case 'grande': {
+        const a = tipo === 'grande' ? 23 : 17, h = tipo === 'grande' ? 27 : 20, y0 = -(tipo === 'grande' ? 7 : 3);
+        const cam = c => { c.beginPath(); c.moveTo(-a, y0); c.lineTo(a, y0); c.bezierCurveTo(a, y0 + h * 0.9, a * 0.55, y0 + h, 0, y0 + h); c.bezierCurveTo(-a * 0.55, y0 + h, -a, y0 + h * 0.9, -a, y0); c.closePath(); };
+        cam(g); T.pinta(g, '#3B1522', 0);
+        g.save(); cam(g); g.clip();
+        T.elip(g, 0, y0 + h, a * 0.62, h * 0.42); T.pinta(g, T.ROJO, 0);
+        g.fillStyle = '#FFFFFF'; g.fillRect(-a, y0 - 2, a * 2, h * 0.3 + 2);
+        g.restore();
+        cam(g); T.linea(g, 5);
+        break;
+      }
+      case 'dientes': {
+        T.rr(g, -17, -6, 34, 17, 6); T.pinta(g, '#FFFFFF', 5);
+        g.beginPath(); g.moveTo(-17, 2.5); g.lineTo(17, 2.5);
+        for (const x of [-8, 0, 8]) { g.moveTo(x, -6); g.lineTo(x, 11); }
+        T.linea(g, 3);
+        break;
+      }
+      case 'o': T.elip(g, 0, 3, 8.5, 11.5); T.pinta(g, '#3B1522', 5); break;
+      case 'pena': g.beginPath(); g.moveTo(-13, 8); g.quadraticCurveTo(0, -6, 13, 8); T.linea(g, 5.5); break;
+      case 'lengua': {
+        g.beginPath(); g.moveTo(-13, 0); g.quadraticCurveTo(0, 9, 14, -1); T.linea(g, 5.5);
+        g.beginPath(); g.moveTo(3, 4); g.quadraticCurveTo(5, 17, 12, 13); g.quadraticCurveTo(17, 9, 13, 1); g.closePath();
+        T.pinta(g, T.ROJO, 4.5);
+        break;
+      }
+      default: g.beginPath(); g.moveTo(-14, -2); g.quadraticCurveTo(0, 11, 14, -2); T.linea(g, 5.5);
+    }
+    g.restore();
+  }
+
+  // --- pelo y gorros --------------------------------------------------------
+  function peloDetras(g, a) {
+    const c = a.cPelo;
+    if (a.pelo === 'melena') {
+      // dos mechones a los lados, hasta la mandíbula: nunca por debajo de la barbilla
+      for (const s of [-1, 1]) {
+        T.vol(g, x => { x.beginPath(); x.moveTo(s * 40, -40); x.bezierCurveTo(s * 70, -34, s * 80, 6, s * 68, 38); x.bezierCurveTo(s * 62, 52, s * 44, 48, s * 40, 34); x.closePath(); }, c, { dx: -4, dy: -5, w: 6 });
+      }
+    } else if (a.pelo === 'coleta') {
+      // nace arriba y detrás, con su goma, y cae hacia un lado
+      T.vol(g, x => { x.beginPath(); x.moveTo(34, -50); x.bezierCurveTo(70, -86, 110, -52, 100, -4); x.bezierCurveTo(96, 16, 84, 30, 74, 34); x.bezierCurveTo(86, 6, 82, -30, 46, -34); x.closePath(); }, c, { dx: -4, dy: -5, w: 6 });
+      T.vol(g, x => T.elip(x, 41, -43, 9, 12, 0.7), T.ROJO, { dx: -1, dy: -2, w: 4.5 });
+    } else if (a.pelo === 'rizos') {
+      const pts = [];
+      for (let i = 0; i < 9; i++) { const an = Math.PI * (1.02 + i * 0.12); pts.push([Math.cos(an) * 56, -8 + Math.sin(an) * 54]); }
+      g.fillStyle = T.TINTA; for (const [x, y] of pts) { T.circ(g, x, y, 23); g.fill(); }
+      g.fillStyle = c; for (const [x, y] of pts) { T.circ(g, x, y, 17.5); g.fill(); }
+    }
+  }
+  function peloDelante(g, a, tapado, f) {
+    const c = a.cPelo;
+    if (tapado) {
+      for (const s of [-1, 1]) {
+        T.vol(g, x => { x.beginPath(); x.moveTo(s * (f.w + 1), -22); x.quadraticCurveTo(s * (f.w - 14), -16, s * (f.w - 10), 6); x.quadraticCurveTo(s * (f.w + 2), 4, s * (f.w + 3), -8); x.closePath(); }, c, { dx: -2, dy: -3, w: 5 });
+      }
+      return;
+    }
+    if (a.pelo === 'rizos') {
+      const pts = [];
+      for (let i = 0; i < 6; i++) { const an = Math.PI * (1.16 + i * 0.136); pts.push([Math.cos(an) * 40, -10 + Math.sin(an) * 40]); }
+      g.fillStyle = T.TINTA; for (const [x, y] of pts) { T.circ(g, x, y, 19); g.fill(); }
+      g.fillStyle = c; for (const [x, y] of pts) { T.circ(g, x, y, 14); g.fill(); }
+      g.fillStyle = T.claro(c, 0.28); for (const [x, y] of pts) { T.circ(g, x - 4, y - 5, 4); g.fill(); }
+      return;
+    }
+    T.vol(g, x => {
+      x.beginPath(); x.moveTo(-56, -6);
+      x.bezierCurveTo(-60, -50, -32, -64, 0, -64); x.bezierCurveTo(32, -64, 60, -50, 56, -6);
+      x.bezierCurveTo(50, -26, 30, -36, 6, -30); x.bezierCurveTo(-18, -24, -44, -30, -56, -6); x.closePath();
+    }, c, { dx: -5, dy: -6, w: 6 });
+  }
+
+  function gorro(g, a) {
+    const c = a.cGorro, s = T.oscuro(c, 0.24);
+    switch (a.gorro) {
+      case 'gorra': {
+        // visera hacia delante y un poco ladeada
+        T.vol(g, x => { x.beginPath(); x.moveTo(-50, -22); x.quadraticCurveTo(4, -40, 66, -24); x.quadraticCurveTo(82, -10, 58, -4); x.quadraticCurveTo(6, -18, -44, -8); x.closePath(); }, s, { sombra: T.oscuro(c, 0.42), dx: 0, dy: -5, w: 6 });
+        T.vol(g, x => { x.beginPath(); x.moveTo(-58, -18); x.bezierCurveTo(-62, -64, -30, -84, 0, -84); x.bezierCurveTo(30, -84, 62, -64, 58, -18); x.quadraticCurveTo(0, -38, -58, -18); x.closePath(); }, c, { sombra: s, dx: -6, dy: -7, w: 6 });
+        T.circ(g, 0, -84, 6); T.pinta(g, s, 5);
+        T.vol(g, x => T.circ(x, 4, -56, 15), T.PAPEL, { sombra: '#DDD0B4', dx: -2, dy: -3, w: 5 });
+        g.beginPath(); g.moveTo(-3, -61); g.lineTo(6, -61); g.lineTo(-2, -51); g.lineTo(8, -51); T.linea(g, 4);
+        break;
+      }
+      case 'lana': {
+        T.vol(g, x => { x.beginPath(); x.moveTo(-56, -24); x.bezierCurveTo(-60, -76, -30, -96, 0, -96); x.bezierCurveTo(30, -96, 60, -76, 56, -24); x.closePath(); }, c, { sombra: s, dx: -6, dy: -7, w: 6 });
+        T.vol(g, x => T.rr(x, -60, -42, 120, 26, 12), T.claro(c, 0.3), { sombra: c, dx: 0, dy: -6, w: 6 });
+        g.beginPath(); for (let x = -40; x <= 40; x += 20) { g.moveTo(x, -38); g.lineTo(x, -21); } T.linea(g, 4);
+        T.vol(g, x => T.circ(x, 0, -102, 16), T.PAPEL, { sombra: '#DDD0B4', dx: -3, dy: -4, w: 6 });
+        break;
+      }
+      case 'vaquero': {
+        T.vol(g, x => { x.beginPath(); x.moveTo(-84, -36); x.bezierCurveTo(-60, -14, 60, -14, 84, -36); x.bezierCurveTo(80, -52, 52, -42, 0, -42); x.bezierCurveTo(-52, -42, -80, -52, -84, -36); x.closePath(); }, c, { sombra: s, dx: 0, dy: -6, w: 6 });
+        T.vol(g, x => { x.beginPath(); x.moveTo(-50, -36); x.bezierCurveTo(-56, -86, -26, -98, -10, -86); x.quadraticCurveTo(0, -78, 10, -86); x.bezierCurveTo(26, -98, 56, -86, 50, -36); x.quadraticCurveTo(0, -26, -50, -36); x.closePath(); }, c, { sombra: s, dx: -6, dy: -6, w: 6 });
+        g.beginPath(); g.moveTo(-51, -49); g.quadraticCurveTo(0, -38, 51, -49); T.linea(g, 10, T.TINTA);
+        g.beginPath(); g.moveTo(-50, -49); g.quadraticCurveTo(0, -38, 50, -49); T.linea(g, 5, T.AMARILLO);
+        break;
+      }
+      case 'chef': {
+        const pts = [[-30, -84, 27], [0, -98, 29], [30, -84, 27], [0, -72, 28]];
+        g.fillStyle = T.TINTA; for (const [x, y, r] of pts) { T.circ(g, x, y, r + 6); g.fill(); }
+        g.fillStyle = '#DDD0B4'; for (const [x, y, r] of pts) { T.circ(g, x, y, r); g.fill(); }
+        g.fillStyle = c; for (const [x, y, r] of pts) { T.circ(g, x - 4, y - 5, r - 3); g.fill(); }
+        T.vol(g, x => T.rr(x, -46, -60, 92, 34, 8), c, { sombra: '#DDD0B4', dx: -5, dy: -5, w: 6 });
+        break;
+      }
+      case 'cinta': {
+        T.vol(g, x => { x.beginPath(); x.moveTo(50, -30); x.quadraticCurveTo(80, -44, 88, -18); x.quadraticCurveTo(72, -20, 58, -12); x.closePath(); }, c, { sombra: s, dx: -2, dy: -3, w: 5 });
+        g.beginPath(); g.moveTo(-52, -20); g.quadraticCurveTo(0, -40, 52, -20); T.linea(g, 22);
+        g.beginPath(); g.moveTo(-52, -20); g.quadraticCurveTo(0, -40, 52, -20); T.linea(g, 11, c);
+        break;
+      }
+    }
+  }
+
+  // --- cabezas ----------------------------------------------------------------
+  function cabezaHumana(g, a, expr, t, mira) {
+    const piel = P.PIELES[a.piel], pielS = T.oscuro(piel, 0.2), f = FORMAS[a.forma] || FORMAS.redonda;
+    peloDetras(g, a);
+    for (const s of [-1, 1]) T.vol(g, c => T.circ(c, s * (f.w + 1), 6, f.oreja), piel, { sombra: pielS, dx: -2, dy: -3, w: 5 });
+    T.vol(g, c => caminoCabeza(c, f), piel, { sombra: pielS, dx: -6, dy: -7, w: 6 });
+    if (a.colorete) {
+      g.save(); g.globalAlpha = 0.3; g.fillStyle = T.ROJO;
+      T.circ(g, -(f.wb || f.w) + 20, 22, 9.5); g.fill(); T.circ(g, (f.wb || f.w) - 20, 22, 9.5); g.fill();
+      g.restore();
+    }
+    if (a.tirita) {
+      g.save(); g.translate(36, 9); g.rotate(-0.5);
+      T.rr(g, -12, -5.5, 24, 11, 4); T.pinta(g, '#F7E6C4', 3);
+      g.fillStyle = T.oscuro('#F7E6C4', 0.3); T.circ(g, -2.5, 0, 1.4); g.fill(); T.circ(g, 2.5, 0, 1.4); g.fill();
+      g.restore();
+    }
+    const tapado = a.gorro && a.gorro !== 'cinta';
+    cara(g, expr, t, { ex: a.ojos === 'gafas' ? 22 : 20, ey: a.forma === 'alargada' ? -8 : -4, by: a.forma === 'alargada' ? 33 : 30, piel, mira, ojos: a.ojos, nariz: a.nariz, bigote: a.bigote, pecas: a.pecas });
+    peloDelante(g, a, tapado, f);
+    if (a.flequillo) {
+      // un mechón que se escapa por debajo de la gorra
+      T.vol(g, x => { x.beginPath(); x.moveTo(-48, -28); x.quadraticCurveTo(-34, 0, -12, -9); x.quadraticCurveTo(-22, -15, -18, -30); x.closePath(); }, a.cPelo, { dx: -2, dy: -3, w: 5 });
+    }
+    if (a.gorro) gorro(g, a);
+  }
+
+  function cabezaTele(g, a, expr, t, mira) {
+    for (const s of [-1, 1]) {
+      g.beginPath(); g.moveTo(s * 14, -50); g.lineTo(s * 36, -88); T.linea(g, 8);
+      T.vol(g, c => T.circ(c, s * 37, -90, 9), T.ROJO, { dx: -2, dy: -3, w: 5 });
+    }
+    T.vol(g, c => T.rr(c, -62, -56, 124, 108, 24), T.AMARILLO, { dx: -6, dy: -8, w: 6 });
+    const pant = c => T.rr(c, -50, -45, 100, 74, 16);
+    const azul = T.mezcla(T.AZUL, T.TINTA, 0.35);
+    pant(g); T.pinta(g, azul, 0);
+    g.save(); pant(g); g.clip();
+    const barras = [T.PAPEL, T.AMARILLO, T.MENTA, T.VIOLETA, T.ROJO, T.AZUL];
+    for (let i = 0; i < 6; i++) { g.fillStyle = barras[i]; g.fillRect(-50 + i * 16.7, -45, 17, 13); }
+    g.fillStyle = T.TINTA; g.fillRect(-50, -33, 100, 3.5);
+    g.restore();
+    cara(g, expr, t, { ex: 20, ey: -6, by: 15, piel: azul, mira, ojos: 'blanco' });
+    pant(g); T.linea(g, 5.5);
+    T.circ(g, -40, 40, 5); T.pinta(g, T.TINTA, 0);
+    T.circ(g, -24, 40, 5); T.pinta(g, T.TINTA, 0);
+    g.beginPath(); for (const x of [8, 20, 32, 44]) { g.moveTo(x, 36); g.lineTo(x, 44); } T.linea(g, 4);
+  }
+
+  function cabeza(g, a, expr, t, mira) {
+    if (a.tele) cabezaTele(g, a, expr, t, mira); else cabezaHumana(g, a, expr, t, mira);
+  }
+  P.cabeza = cabeza;
+
+  // --- ropa: el origen es la base del cuello ------------------------------------
+  // `cam` traza el torso. Primero lo que va dentro del torso y luego lo que sobresale.
+  function torso(g, a, cam) {
+    const c = a.chaqueta, base = a.ropa === 'chaleco' ? T.PAPEL : c;
+    T.vol(g, cam, base, { sombra: base === T.PAPEL ? '#DDD0B4' : undefined, dx: -6, dy: -6, w: 0 });
+    g.save(); cam(g); g.clip();
+    switch (a.ropa) {
+      case 'chandal':
+        g.beginPath(); g.moveTo(0, 0); g.lineTo(0, 90); T.linea(g, 4);
+        T.rr(g, -24, 34, 17, 12, 4); T.pinta(g, T.PAPEL, 4);
+        break;
+      case 'sudadera':
+        T.rr(g, -22, 40, 44, 40, 10); T.pinta(g, T.oscuro(c, 0.14), 4.5);
+        break;
+      case 'abrigo':
+        g.beginPath(); g.moveTo(6, 0); g.lineTo(6, 90); T.linea(g, 4);
+        for (const y of [24, 44, 64]) { T.circ(g, -8, y, 5); T.pinta(g, T.TINTA, 0); }
+        break;
+      case 'chaleco':
+        for (const s of [-1, 1]) {
+          g.beginPath(); g.moveTo(s * 5, -6); g.lineTo(s * 13, 34); g.lineTo(s * 6, 90); g.lineTo(s * 90, 90); g.lineTo(s * 90, -6); g.closePath();
+          T.pinta(g, c, 5);
+        }
+        T.estrella(g, -22, 26, 9, 4, 5); T.pinta(g, T.AMARILLO, 3.5);
+        break;
+      case 'chaquetilla':
+        g.beginPath(); g.moveTo(-12, 0); g.lineTo(-12, 90); T.linea(g, 4);
+        for (const y of [20, 38, 56]) for (const x of [-22, 4]) { T.circ(g, x, y, 4.2); T.pinta(g, T.TINTA, 0); }
+        break;
+      case 'esmoquin':
+        T.poli(g, [[-17, -4], [17, -4], [0, 40]]); T.pinta(g, '#2B2536', 5);
+        for (const y of [50, 64]) { T.circ(g, 0, y, 4); T.pinta(g, T.TINTA, 0); }
+        break;
+    }
+    g.restore();
+    cam(g); T.linea(g, 6);
+  }
+  function cuello(g, a) {
+    switch (a.ropa) {
+      case 'chandal':
+        T.poli(g, [[-22, -2], [0, 22], [-5, -2]]); T.pinta(g, T.PAPEL, 5);
+        T.poli(g, [[22, -2], [0, 22], [5, -2]]); T.pinta(g, T.PAPEL, 5);
+        break;
+      case 'sudadera':
+        T.vol(g, x => { x.beginPath(); x.moveTo(-34, 4); x.quadraticCurveTo(0, -14, 34, 4); x.quadraticCurveTo(0, 30, -34, 4); x.closePath(); }, T.oscuro(a.chaqueta, 0.16), { dx: -2, dy: -3, w: 5 });
+        for (const s of [-1, 1]) {
+          g.beginPath(); g.moveTo(s * 8, 14); g.lineTo(s * 10, 38); T.linea(g, 8);
+          g.beginPath(); g.moveTo(s * 8, 14); g.lineTo(s * 10, 38); T.linea(g, 3.5, T.PAPEL);
+        }
+        break;
+      case 'abrigo': {
+        const b = a.cBufanda || T.ROJO;
+        T.vol(g, x => T.rr(x, 12, 4, 22, 46, 8), b, { dx: -3, dy: 0, w: 5.5 });
+        g.beginPath(); g.moveTo(17, 42); g.lineTo(17, 50); g.moveTo(23, 42); g.lineTo(23, 50); g.moveTo(29, 42); g.lineTo(29, 50); T.linea(g, 3);
+        T.vol(g, x => T.rr(x, -34, -10, 68, 24, 12), b, { dx: 0, dy: -5, w: 5.5 });
+        break;
+      }
+      case 'chaleco':
+        T.vol(g, x => T.poli(x, [[-26, -6], [26, -6], [0, 26]]), T.AMARILLO, { dx: -3, dy: -3, w: 5.5 });
+        break;
+      case 'chaquetilla':
+        T.vol(g, x => T.rr(x, -24, -8, 48, 16, 8), T.ROJO, { dx: 0, dy: -4, w: 5 });
+        T.vol(g, x => T.poli(x, [[-4, 6], [10, 6], [14, 26], [0, 22]]), T.ROJO, { dx: -2, dy: 0, w: 5 });
+        break;
+      case 'esmoquin':
+        T.vol(g, x => T.poli(x, [[-22, -10], [0, 0], [-22, 12]]), T.ROJO, { dx: -1, dy: -2, w: 5 });
+        T.vol(g, x => T.poli(x, [[22, -10], [0, 0], [22, 12]]), T.ROJO, { dx: -1, dy: -2, w: 5 });
+        T.circ(g, 0, 1, 6); T.pinta(g, T.ROJO, 5);
+        break;
+    }
+  }
+
+  // --- busto: para las placas ---------------------------------------------------
+  // El origen es el centro de la cabeza. `s` es la escala (1 = cabeza de unos 110 de ancho).
+  P.busto = function (g, x, y, s, a, expr, t, o) {
+    o = o || {};
+    const lat = (o.golpe || 0);                 // 1 justo al reaccionar, baja a 0
+    const bote = Math.sin(t * 0.09) * 1.5;
+    g.save();
+    g.translate(x, y); g.scale(s, s);
+    g.save(); g.translate(0, 62);
+    torso(g, a, c => { c.beginPath(); c.moveTo(-64, 70); c.quadraticCurveTo(-64, 6, -24, 0); c.lineTo(24, 0); c.quadraticCurveTo(64, 6, 64, 70); c.closePath(); });
+    if (!a.tele) { T.rr(g, -13, -18, 26, 26, 8); T.pinta(g, T.oscuro(P.PIELES[a.piel], 0.2), 6); }
+    cuello(g, a);
+    g.restore();
+    g.translate(0, bote - lat * 6);
+    g.rotate((o.ladeo || 0) + Math.sin(t * 0.05) * 0.02);
+    g.scale(1 + lat * 0.08, 1 - lat * 0.06);
+    cabeza(g, a, expr, t, o.mira);
+    g.restore();
+  };
+
+  // --- cuerpo entero ----------------------------------------------------------------
+  // El origen es el suelo, entre los pies. Cada pose dice cuánto se inclina el tronco y la cabeza
+  // y dónde quedan el codo y la mano de cada brazo: [codoX, codoY, manoX, manoY, abierta].
+  const POSES = {
+    quieto: { tor: 0.02, cab: 0.04, izq: [-50, -84, -52, -56], der: [50, -84, 54, -58] },
+    listo: { tor: -0.07, cab: -0.06, izq: [-60, -92, -42, -126], der: [56, -82, 66, -112] },
+    reto: { tor: -0.12, cab: -0.1, izq: [-62, -100, -36, -136], der: [52, -80, 70, -62] },
+    victoria: { tor: 0.1, cab: -0.16, izq: [-66, -132, -54, -196], der: [58, -90, 62, -122], salto: true, piernas: [-12, 10] },
+    dosArriba: { tor: 0.04, cab: -0.1, izq: [-74, -128, -94, -186], der: [74, -134, 98, -198], salto: true, piernas: [-12, 10] },
+    saludoAlto: { tor: 0.08, cab: -0.14, izq: [-60, -96, -80, -128], der: [66, -132, 94, -194, true], salto: true, piernas: [-8, 12] },
+    ala: { tor: -0.05, cab: -0.1, izq: [-50, -84, -54, -60], der: [72, -128, 60, -206], sobre: 'der' },
+    ala2: { tor: 0.08, cab: -0.14, izq: [-66, -130, -62, -192], der: [72, -128, 60, -206], sobre: 'der', salto: true, piernas: [-10, 8] },
+    gafas: { tor: -0.03, cab: -0.06, izq: [-50, -84, -52, -56], der: [66, -118, 42, -172], sobre: 'der' },
+    cruzado: { tor: 0, cab: 0.08, izq: [-54, -72, 16, -84], der: [54, -76, -18, -76], frente: true },
+    palma: { tor: 0.05, cab: 0.2, cabY: 10, hunde: 6, izq: [-44, -70, -46, -38], der: [62, -112, 20, -158, true], sobre: 'der' },
+    manosCabeza: { tor: 0, cab: 0.06, izq: [-80, -150, -46, -222, true], der: [80, -150, 46, -222, true], sobre: 'ambos' },
+    derrota: { tor: 0.07, cab: 0.3, cabY: 16, hunde: 9, izq: [-42, -70, -46, -36], der: [40, -70, 46, -38] },
+    saludo: { tor: -0.05, cab: 0.1, izq: [-50, -84, -54, -58], der: [62, -120, 88, -168, true] },
+  };
+  P.entero = function (g, x, y, s, a, expr, t, pose) {
+    const Q = POSES[pose] || POSES.quieto;
+    const piel = a.tele ? T.AMARILLO : P.PIELES[a.piel];
+    const mangas = a.mangas || a.chaqueta;
+    const salto = Q.salto ? Math.abs(Math.sin(t * 0.17)) * 22 : 0;
+    const resp = Math.sin(t * 0.08) * 2;
+    g.save();
+    g.translate(x, y); g.scale(s, s);
+    g.save(); g.globalAlpha = 0.28; T.elip(g, 0, 2, 62 - salto * 0.8, 13 - salto * 0.2); g.fillStyle = T.TINTA; g.fill(); g.restore();
+    g.translate(0, -salto + (Q.hunde || 0));
+    // piernas y calzado
+    const sep = Q.piernas || [0, 0];
+    for (const sg of [-1, 1]) {
+      const ab = sg < 0 ? sep[0] : sep[1], sube = Q.salto && sg < 0 ? -10 : 0;
+      const px = sg * 20 + ab, py = -14 + sube - (Q.hunde || 0);
+      T.tubo(g, c => { c.beginPath(); c.moveTo(sg * 15, -52); c.lineTo(sg * 16 + ab * 0.5, -34 + sube * 0.5); c.lineTo(px, py); }, a.pantalon || '#2B2536', 17, 5);
+      if (a.calzado === 'bota') {
+        T.vol(g, c => { c.beginPath(); c.moveTo(px - 12, py - 16); c.lineTo(px + 11, py - 16); c.lineTo(px + 11, py - 2); c.quadraticCurveTo(px + 11 + sg * 16, py - 2, px + 11 + sg * 16, py + 14); c.lineTo(px - 12, py + 14); c.closePath(); }, '#8A4B2A', { dx: -2, dy: -3, w: 5.5 });
+      } else {
+        T.vol(g, c => { c.beginPath(); c.ellipse(px + sg * 5, py + 6, 22, 12, 0, 0, 7); }, T.PAPEL, { sombra: '#DDD0B4', dx: -2, dy: -3, w: 5.5 });
+        if (a.calzado === 'zapatilla') { g.beginPath(); g.moveTo(px + sg * 5 - 12, py + 11); g.lineTo(px + sg * 5 + 12, py + 11); T.linea(g, 4, a.tele || a.chaqueta === T.PAPEL ? T.ROJO : a.chaqueta); }
+      }
+    }
+    // el tronco entero gira sobre la cadera
+    g.translate(0, -52); g.rotate(Q.tor); g.translate(0, 52);
+    const hombroY = -104 + resp;
+    const brazo = (sg, b) => {
+      T.tubo(g, c => { c.beginPath(); c.moveTo(sg * 30, hombroY + 4); c.lineTo(b[0], b[1] + resp); c.lineTo(b[2], b[3] + resp); }, mangas, 16, 5);
+      mano(g, b[2], b[3] + resp, piel, !!b[4], sg);
+    };
+    const izqSobre = Q.sobre === 'ambos', derSobre = Q.sobre === 'der' || Q.sobre === 'ambos';
+    if (!Q.frente && !izqSobre) brazo(-1, Q.izq);
+    g.save(); g.translate(0, -114 + resp);
+    torso(g, a, c => T.rr(c, -36, -2, 72, 68, 24));
+    cuello(g, a);
+    g.restore();
+    if (Q.frente) brazo(-1, Q.izq);
+    if (!derSobre) brazo(1, Q.der);
+    g.save();
+    g.translate(0, -166 + resp * 1.4 + (Q.cabY || 0));
+    g.rotate(Q.cab + Math.sin(t * 0.05) * 0.02 + (Q.salto ? Math.sin(t * 0.17) * 0.04 : 0));
+    cabeza(g, a, expr, t, Q.cab > 0.15 ? { x: 0, y: 0.9 } : null);
+    g.restore();
+    if (derSobre) brazo(1, Q.der);
+    if (izqSobre) brazo(-1, Q.izq);
+    g.restore();
+  };
+
+  function mano(g, x, y, piel, abierta, sg) {
+    const s = T.oscuro(piel, 0.2);
+    if (abierta) {
+      for (let i = 0; i < 4; i++) {
+        const an = -Math.PI / 2 + (i - 1.5) * 0.36;
+        T.tubo(g, c => { c.beginPath(); c.moveTo(x + Math.cos(an) * 8, y + Math.sin(an) * 8); c.lineTo(x + Math.cos(an) * 25, y + Math.sin(an) * 25); }, piel, 7, 4);
+      }
+      T.tubo(g, c => { c.beginPath(); c.moveTo(x - sg * 8, y + 2); c.lineTo(x - sg * 22, y - 6); }, piel, 7, 4);
+      T.vol(g, c => T.circ(c, x, y, 14), piel, { sombra: s, dx: -2, dy: -3, w: 5 });
+    } else {
+      // puño con su pulgar
+      T.vol(g, c => T.circ(c, x - sg * 10, y - 7, 7), piel, { sombra: s, dx: -1, dy: -2, w: 4.5 });
+      T.vol(g, c => T.circ(c, x, y, 14), piel, { sombra: s, dx: -2, dy: -3, w: 5 });
+    }
+  }
+})();
+//# sourceURL=zz/personaje.js
+</script>
+<script>
+/* ZikZak · canal 1 · Cocina · ¡CORTA!
+   Un chorizo pasa bajo el cuchillo. Se toca cuando una marca llega a la hoja.
+   Mide el ritmo: cada corte puntúa según lo cerca que cae de su marca. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ, T = ZZ.tinta;
+
+  const KX = 236;          // donde corta el cuchillo
+  const CY = 520;          // eje del chorizo
+  const GROSOR = 96;
+  const ARRANQUE = 60;     // lo que le falta a la cabeza para llegar al cuchillo al empezar
+  const INC = 18;          // inclinación del corte (al bies)
+  const ANG = -1.212;      // giro del cuchillo: su filo queda paralelo a las marcas
+  const PUNTA_X = KX - 88; // con esto el filo cruza el eje del chorizo justo en KX
+  const NIV = [null,
+    { v: 2.7, n: 5, huecos: [48], tol: 38, acel: 0 },
+    { v: 3.1, n: 6, huecos: [30, 42, 54], tol: 36, acel: 0 },
+    { v: 3.5, n: 8, huecos: [18, 30, 42], tol: 32, acel: 0.22 }];
+
+  const C = {
+    chorizo: '#E5482F', chorizoS: '#B5301F', cara: '#F27A5E',
+    madera: '#F0B24A', maderaS: '#D58F36',
+    hoja: '#E6EDF2', hojaS: '#B9C6D2', mango: '#2B2536',
+    piel: '#F2B98A', pielS: '#D9925F',
+  };
+
+  // --- lógica ---------------------------------------------------------------
+  function init(semilla, nivel) {
+    const rng = ZZ.azar(semilla), N = NIV[nivel];
+    const v0 = N.v * rng.entre(0.95, 1.05);
+    let llegadas = [];
+    for (let intento = 0; intento < 40; intento++) {
+      llegadas = [rng.entero(46, 56)];
+      for (let i = 1; i < N.n; i++) llegadas.push(llegadas[i - 1] + rng.elige(N.huecos));
+      if (llegadas[N.n - 1] <= 266) break;
+    }
+    const ult = llegadas[N.n - 1];
+    if (ult > 266) llegadas = llegadas.map(a => Math.round(46 + (a - 46) * 220 / (ult - 46)));
+    const dist = [];
+    let d = 0;
+    for (let s = 0; s <= ZZ.PASOS + 2; s++) { dist.push(d); d += v0 * (1 + N.acel * s / ZZ.PASOS); }
+    const marcas = llegadas.map(a => ({ m: dist[a] - ARRANQUE, llega: a, hecha: false, pasada: false, pts: 0, err: 0 }));
+    return {
+      semilla, nivel, tol: N.tol, dist, marcas,
+      largo: marcas[marcas.length - 1].m + 100,
+      ini: 0, cool: 0, fallos: 0, suma: 0, quedan: N.n, espera: 0, c: -ARRANQUE,
+      hecho: false, ev: [],
+    };
+  }
+
+  function paso(e, entradas, n) {
+    const c = e.dist[n] - ARRANQUE;      // punto del chorizo que está bajo el cuchillo
+    e.c = c;
+    if (e.cool > 0) e.cool--;
+    for (const en of entradas) {
+      if (en.t !== 'd' || e.cool > 0) continue;
+      e.cool = 8;
+      if (c <= e.ini + 6 || c > e.largo) { e.fallos++; e.ev.push({ t: 'aire' }); continue; }
+      let j = -1, mejor = 1e9;
+      for (let i = 0; i < e.marcas.length; i++) {
+        const m = e.marcas[i];
+        if (m.hecha || m.pasada) continue;
+        const dd = Math.abs(m.m - c);
+        if (dd < mejor) { mejor = dd; j = i; }
+      }
+      const trozo = c - e.ini;
+      if (j >= 0 && mejor <= e.tol) {
+        const m = e.marcas[j];
+        const q = mejor <= 8 ? 'perfecto' : mejor <= 19 ? 'bien' : 'justo';
+        m.hecha = true; m.err = c - m.m;
+        m.pts = q === 'perfecto' ? 100 : Math.round(100 - 70 * mejor / e.tol);
+        e.suma += m.pts; e.quedan--;
+        e.ev.push({ t: 'corte', q, i: j, err: m.err, trozo });
+      } else {
+        e.fallos++;
+        e.ev.push({ t: 'corte', q: 'fallo', trozo });
+      }
+      e.ini = c;
+    }
+    for (let i = 0; i < e.marcas.length; i++) {
+      const m = e.marcas[i];
+      if (!m.hecha && !m.pasada && c - m.m > e.tol) { m.pasada = true; e.quedan--; e.ev.push({ t: 'pasada', i }); }
+    }
+    if (e.quedan <= 0 && ++e.espera > 26) e.hecho = true;
+  }
+
+  function puntuacion(e) {
+    return ZZ.lim(Math.round((e.suma - 25 * e.fallos) * 10 / e.marcas.length), 0, 1000);
+  }
+
+  // Jugador de la casa: toca cerca de cada marca, con más o menos tino según la destreza.
+  function casa(e, mem, rng, d, n) {
+    if (!mem.plan) {
+      const sig = ZZ.mix(7.5, 1.1, d), salta = ZZ.mix(0.22, 0, Math.min(1, d * 1.3));
+      mem.plan = e.marcas.map(m => (rng() < salta ? -1 : Math.round(m.llega + rng.campana() * sig)));
+      mem.extra = rng() < ZZ.mix(0.35, 0, d) ? rng.entero(20, 260) : -1;
+    }
+    return (mem.plan.indexOf(n) >= 0 || mem.extra === n) ? [{ t: 'd', x: 320, y: 600 }] : [];
+  }
+
+  // --- dibujo ---------------------------------------------------------------
+  function mantel(g) {
+    const claro = T.mezcla(T.ROJO, T.PAPEL, 0.55), paso = 76;
+    g.fillStyle = T.PAPEL; g.fillRect(0, 0, ZZ.PW, ZZ.PH);
+    g.save();
+    g.translate(320, 420); g.rotate(-0.09); g.translate(-520, -620);
+    for (let i = 0; i < 14; i++) {
+      if (i % 2) { g.fillStyle = claro; g.fillRect(i * paso, 0, paso, 1240); g.fillRect(0, i * paso, 1040, paso); }
+    }
+    g.fillStyle = T.ROJO;
+    for (let i = 1; i < 14; i += 2) for (let j = 1; j < 17; j += 2) g.fillRect(i * paso, j * paso, paso, paso);
+    g.restore();
+  }
+
+  function tabla(g) {
+    const cam = c => T.rr(c, 14, 372, 612, 298, 46);
+    g.save(); g.translate(320, 521); g.rotate(-0.012); g.translate(-320, -521);
+    T.sombra(g, cam, 10, 14, 0.38);
+    T.vol(g, cam, C.madera, { sombra: C.maderaS, dx: -6, dy: -12, w: 7 });
+    // vetas
+    g.save(); cam(g); g.clip();
+    g.lineCap = 'round'; g.strokeStyle = C.maderaS; g.lineWidth = 5;
+    for (const [y, a, b] of [[410, 60, 300], [438, 330, 560], [612, 120, 420], [636, 400, 580], [404, 420, 520]]) {
+      g.beginPath(); g.moveTo(a, y); g.quadraticCurveTo((a + b) / 2, y + 9, b, y + 2); g.stroke();
+    }
+    g.restore();
+    T.circ(g, 56, 418, 15); T.pinta(g, T.oscuro(C.maderaS, 0.45), 6);
+    g.restore();
+  }
+
+  function plato(g) {
+    const cam = c => T.circ(c, 118, 742, 98);
+    T.sombra(g, cam, 9, 12, 0.38);
+    T.vol(g, cam, T.PAPEL, { sombra: '#DDD0B4', dx: -6, dy: -8, w: 7 });
+    T.circ(g, 118, 742, 70); T.linea(g, 5, T.MENTA);
+  }
+
+  // Un plato con una cuña de queso.
+  function queso(g) {
+    const cam = c => T.circ(c, 96, 158, 70);
+    T.sombra(g, cam, 9, 12, 0.38);
+    T.vol(g, cam, T.PAPEL, { sombra: '#DDD0B4', dx: -6, dy: -8, w: 7 });
+    T.circ(g, 96, 158, 50); T.linea(g, 4, '#DDD0B4');
+    g.save(); g.translate(60, 196); g.rotate(-0.12);
+    const cuna = c => { c.beginPath(); c.moveTo(0, 0); c.arc(0, 0, 96, -1.32, -0.42); c.closePath(); };
+    T.sombra(g, cuna, 5, 7, 0.3);
+    T.vol(g, cuna, T.AMARILLO, { sombra: '#E59A1C', dx: -5, dy: -6, w: 6 });
+    g.beginPath(); g.arc(0, 0, 88, -1.28, -0.46); T.linea(g, 7, '#E59A1C');
+    for (const [x, y, r] of [[34, -34, 7], [58, -52, 5], [30, -62, 4.5], [56, -28, 4]]) { T.circ(g, x, y, r); T.pinta(g, '#E59A1C', 3.5); }
+    cuna(g); T.linea(g, 6);
+    g.restore();
+  }
+
+  function ajo(g) {
+    g.save(); g.translate(246, 96); g.rotate(0.3);
+    const cam = c => {
+      c.beginPath(); c.moveTo(0, -44);
+      c.bezierCurveTo(6, -24, 40, -16, 38, 14); c.bezierCurveTo(36, 40, -36, 40, -38, 14);
+      c.bezierCurveTo(-40, -16, -6, -24, 0, -44); c.closePath();
+    };
+    T.sombra(g, cam, 7, 10, 0.38);
+    T.vol(g, cam, T.PAPEL, { sombra: '#D9C9E8', dx: -5, dy: -7, w: 6 });
+    g.beginPath(); g.moveTo(-2, -22); g.quadraticCurveTo(-18, 4, -10, 32); T.linea(g, 4);
+    g.beginPath(); g.moveTo(4, -22); g.quadraticCurveTo(20, 4, 12, 32); T.linea(g, 4);
+    g.restore();
+  }
+
+  // Dos rebanadas de pan.
+  function pan(g) {
+    for (const [x, y, rot] of [[468, 752, -0.25], [548, 770, 0.2]]) {
+      g.save(); g.translate(x, y); g.rotate(rot);
+      const cam = c => T.elip(c, 0, 0, 50, 34);
+      T.sombra(g, cam, 7, 9, 0.35);
+      cam(g); T.pinta(g, '#B5722D', 6);
+      T.vol(g, c => T.elip(c, 0, 0, 41, 26), '#F8E6BC', { sombra: '#E9CE95', dx: -4, dy: -5, w: 0 });
+      g.fillStyle = '#E9CE95';
+      for (const [dx, dy, r] of [[-18, -6, 4], [8, -10, 3], [16, 8, 4.5], [-6, 10, 3]]) { T.circ(g, dx, dy, r); g.fill(); }
+      g.restore();
+    }
+  }
+
+  function caminoChorizo(g, x1, x2, cabeza, cola) {
+    const r = GROSOR / 2, y0 = CY - r, y1 = CY + r;
+    g.beginPath();
+    g.moveTo(cabeza ? x1 + r : x1 + INC, y0);
+    if (cola) { g.lineTo(x2 - r, y0); g.arc(x2 - r, CY, r, -Math.PI / 2, Math.PI / 2); }
+    else { g.lineTo(x2, y0); g.lineTo(x2, y1); }
+    if (cabeza) { g.lineTo(x1 + r, y1); g.arc(x1 + r, CY, r, Math.PI / 2, Math.PI * 1.5); }
+    else g.lineTo(x1 - INC, y1);
+    g.closePath();
+  }
+
+  function motasDe(e, vis) {
+    if (vis.motas) return vis.motas;
+    const rng = ZZ.azar(e.semilla ^ 0x51ED);
+    const l = [];
+    for (let c = 14; c < e.largo - 10; c += rng.entre(15, 27)) {
+      l.push({ c, y: rng.entre(-34, 34), r: rng.entre(3.5, 7), a: rng.entre(0, 3) });
+    }
+    vis.motas = l;
+    return l;
+  }
+
+  function chorizo(g, e, vis) {
+    const cabezaX = KX - e.c;
+    const x1 = cabezaX + e.ini, x2real = cabezaX + e.largo;
+    if (x2real < -60) return;
+    const cola = x2real < ZZ.PW + 60, x2 = cola ? x2real : ZZ.PW + 60;
+    const cabeza = e.ini === 0;
+    if (x2 - x1 < 8) return;
+    const cam = c => caminoChorizo(c, x1, x2, cabeza, cola);
+    T.sombra(g, cam, 6, 12, 0.3);
+    // cuerdas de los extremos
+    if (cabeza) {
+      g.beginPath(); g.moveTo(x1 + 4, CY); g.quadraticCurveTo(x1 - 16, CY - 10, x1 - 22, CY + 12); T.linea(g, 9);
+      g.beginPath(); g.moveTo(x1 + 4, CY); g.quadraticCurveTo(x1 - 16, CY - 10, x1 - 22, CY + 12); T.linea(g, 4, T.PAPEL);
+    }
+    if (cola) {
+      g.beginPath(); g.moveTo(x2 - 4, CY); g.bezierCurveTo(x2 + 34, CY - 40, x2 + 46, CY + 26, x2 + 8, CY + 6); T.linea(g, 9);
+      g.beginPath(); g.moveTo(x2 - 4, CY); g.bezierCurveTo(x2 + 34, CY - 40, x2 + 46, CY + 26, x2 + 8, CY + 6); T.linea(g, 4, T.PAPEL);
+    }
+    T.vol(g, cam, C.chorizo, { sombra: C.chorizoS, dx: 0, dy: -18, w: 0 });
+    // tocino y brillo, recortados al cuerpo
+    g.save(); cam(g); g.clip();
+    g.fillStyle = T.PAPEL;
+    for (const m of motasDe(e, vis)) {
+      const x = cabezaX + m.c;
+      if (x < x1 - 10 || x > x2 + 10) continue;
+      g.beginPath(); g.ellipse(x, CY + m.y, m.r, m.r * 0.62, m.a, 0, 7); g.fill();
+    }
+    g.strokeStyle = T.claro(C.chorizo, 0.42); g.lineWidth = 7; g.lineCap = 'round';
+    g.setLineDash([46, 30]); g.lineDashOffset = -cabezaX;
+    g.beginPath(); g.moveTo(x1 + 30, CY - 31); g.lineTo(x2 - 30, CY - 31); g.stroke();
+    g.setLineDash([]);
+    g.restore();
+    cam(g); T.linea(g, 7);
+    // cara del corte
+    if (!cabeza) {
+      const camCara = c => { c.beginPath(); c.ellipse(x1, CY, 15, GROSOR / 2 + 3, 0.36, 0, 7); };
+      camCara(g); T.pinta(g, C.cara, 6);
+      g.fillStyle = T.PAPEL;
+      for (const [dx, dy] of [[-3, -22], [4, -4], [-2, 16], [3, 30]]) { T.circ(g, x1 + dx, CY + dy, 3.4); g.fill(); }
+    }
+    // marcas por cortar
+    for (const m of e.marcas) {
+      if (m.hecha) continue;
+      const x = cabezaX + m.m;
+      if (x < -30 || x > ZZ.PW + 30) continue;
+      g.globalAlpha = m.pasada ? 0.28 : 1;
+      g.beginPath(); g.moveTo(x + INC * 0.86, CY - 41); g.lineTo(x - INC * 0.86, CY + 41);
+      T.linea(g, 13);
+      g.setLineDash([11, 10]);
+      g.beginPath(); g.moveTo(x + INC * 0.86, CY - 41); g.lineTo(x - INC * 0.86, CY + 41);
+      T.linea(g, 6, T.PAPEL);
+      g.setLineDash([]);
+      if (!m.pasada) {
+        const by = CY - 78 + Math.sin(vis.t * 0.22 + m.m) * 4;
+        T.poli(g, [[x + INC - 15, by - 16], [x + INC + 15, by - 16], [x + INC, by + 12]]);
+        T.pinta(g, T.AMARILLO, 5);
+      }
+      g.globalAlpha = 1;
+    }
+  }
+
+  // El cuchillo se dibuja con la punta en el origen y el mango hacia +x.
+  function caminoHoja(g) {
+    g.beginPath();
+    g.moveTo(0, 0);
+    g.bezierCurveTo(60, 34, 140, 50, 204, 46);
+    g.lineTo(204, -8);
+    g.bezierCurveTo(130, -10, 50, -8, 0, 0);
+    g.closePath();
+  }
+  function cuchillo(g, sombra) {
+    if (sombra) {
+      g.fillStyle = T.TINTA;
+      caminoHoja(g); g.fill();
+      T.rr(g, 200, -12, 140, 40, 14); g.fill();
+      T.rr(g, 222, -30, 86, 78, 26); g.fill();
+      T.rr(g, 300, -40, 420, 100, 30); g.fill();
+      return;
+    }
+    // manga
+    T.vol(g, c => T.rr(c, 318, -44, 420, 106, 30), T.PAPEL, { sombra: '#D9CDB3', dx: 0, dy: -16, w: 7 });
+    T.vol(g, c => T.rr(c, 296, -50, 46, 118, 16), T.PAPEL, { sombra: '#D9CDB3', dx: 0, dy: -16, w: 7 });
+    // hoja
+    T.vol(g, caminoHoja, C.hoja, { sombra: C.hojaS, dx: 0, dy: -13, w: 7 });
+    g.beginPath(); g.moveTo(40, 6); g.lineTo(150, 12); T.linea(g, 5, '#FFFFFF');
+    // mango
+    T.vol(g, c => T.rr(c, 200, -12, 140, 40, 14), C.mango, { sombra: '#17141F', dx: 0, dy: -6, w: 7 });
+    // puño: cuatro dedos y el pulgar
+    T.vol(g, c => T.rr(c, 224, -28, 82, 76, 26), C.piel, { sombra: C.pielS, dx: -3, dy: -8, w: 7 });
+    for (let i = 0; i < 4; i++) {
+      T.vol(g, c => T.rr(c, 226 + i * 19.5, -32, 21, 50, 10), C.piel, { sombra: C.pielS, dx: -2, dy: -5, w: 5 });
+    }
+    T.vol(g, c => T.elip(c, 250, 38, 25, 13, -0.12), C.piel, { sombra: C.pielS, dx: -2, dy: -4, w: 5 });
+  }
+
+  function rodaja(g, x, y, r, giro, aplasta) {
+    g.save();
+    g.translate(x, y); g.rotate(giro); g.scale(1, aplasta);
+    T.circ(g, 0, 0, r); T.pinta(g, C.chorizoS, 0);
+    T.circ(g, 0, 0, r - 5); T.pinta(g, C.cara, 0);
+    g.fillStyle = T.PAPEL;
+    for (const [dx, dy, rr] of [[-12, -8, 5], [9, -14, 4], [12, 8, 5.5], [-6, 13, 4.5], [0, -1, 3.5]]) { T.circ(g, dx * r / 32, dy * r / 32, rr * r / 32); g.fill(); }
+    T.circ(g, 0, 0, r); T.linea(g, 5.5);
+    g.restore();
+  }
+
+  function fondo(g) {
+    mantel(g);
+    queso(g);
+    ajo(g);
+    tabla(g);
+    plato(g);
+    pan(g);
+  }
+
+  const PX = 320, PY = 150;   // las palabras salen en la banda de arriba, como en los otros canales, sobre una placa
+  const HUECOS = [[78, 716], [128, 706], [160, 742], [112, 760], [70, 760], [142, 786], [100, 728], [136, 740]];
+
+  function dibuja(g, e, vis) {
+    T.capa(g, vis, 'cocina', fondo);
+    const t = vis.t;
+    // sacudida de la tabla al cortar
+    const golpe = vis.golpe === undefined ? 99 : vis.golpe;
+    const sac = golpe < 6 ? (6 - golpe) * (golpe % 2 ? -1.2 : 1.2) : 0;
+    g.save(); g.translate(0, sac);
+    chorizo(g, e, vis);
+    g.restore();
+
+    // rodajas en el plato y en el aire
+    for (const r of vis.rodajas || []) {
+      const k = Math.min(1, (t - r.t0) / 22);
+      if (k < 1) {
+        const kk = ZZ.e.out3(k);
+        const x = ZZ.mix(r.x0, r.x1, kk), y = ZZ.mix(r.y0, r.y1, kk) - Math.sin(k * Math.PI) * 150;
+        rodaja(g, x, y, 34, k * 7, 0.55 + 0.45 * Math.abs(Math.cos(k * 9)));
+      } else {
+        const b = Math.min(1, (t - r.t0 - 22) / 10);
+        rodaja(g, r.x1, r.y1, 34, r.giro, 1 - 0.22 * Math.sin(b * Math.PI) * (1 - b));
+      }
+    }
+    vis.ch.dibuja(g, 0);
+
+    // cuchillo: sombra en la tabla y hoja con su mano
+    const sube = golpe < 3 ? 0 : golpe < 13 ? ZZ.e.out3((golpe - 3) / 10) : 1;
+    const flota = sube * (Math.sin(t * 0.16) * 3);
+    const ang = ANG + sube * 0.035;
+    g.save();
+    g.translate(PUNTA_X + sac * 0.5, CY + 108);
+    g.save(); g.globalAlpha = 0.24; g.translate(sube * 20, sube * 8); g.rotate(ANG); cuchillo(g, true); g.restore();
+    g.translate(-sube * 16, -sube * 46 + flota);
+    g.rotate(ang);
+    g.scale(1 + sube * 0.06, 1 + sube * 0.06);
+    cuchillo(g, false);
+    g.restore();
+
+    vis.ch.dibuja(g, 1);
+  }
+
+  // Lo que se ve y se oye cuando pasa algo. No cambia la partida.
+  function efectos(e, vis, ev, son) {
+    for (const x of ev) {
+      if (x.t === 'corte') {
+        vis.golpe = 0;
+        const px = KX, py = CY;
+        T.polvo(vis.ch, px, py + 30, 5, T.PAPEL, 4, 9);
+        if (x.q === 'fallo') {
+          const l = ZZ.lim(x.trozo, 24, 150);
+          vis.ch.mas({ tipo: 'dib', x: px - l / 2 - 10, y: py, vx: -4.5, vy: -7, g: 0.75, vr: -0.16, vida: 60,
+            dib: (c) => { T.vol(c, cc => T.rr(cc, -l / 2, -GROSOR / 2, l, GROSOR, 30), C.chorizo, { sombra: C.chorizoS, dx: 0, dy: -16, w: 7 }); } });
+          T.palabra(vis.ch, '¡UY!', PX, PY, T.ROJO, 60, 1, true);
+          vis.temblor = 7; son && son.fallo();
+        } else {
+          vis.rodajas = vis.rodajas || [];
+          const h = HUECOS[vis.rodajas.length % HUECOS.length];
+          vis.rodajas.push({ t0: vis.t, x0: px - 30, y0: py, x1: h[0], y1: h[1], giro: Math.random() * 6 });
+          if (x.q === 'perfecto') {
+            T.estrellas(vis.ch, px, py - 20, 7, T.AMARILLO, 9, 20, 1);
+            vis.ch.mas({ tipo: 'anillo', x: px, y: py, r: 30, R: 150, w: 14, color: '#FFFFFF', vida: 16, capa: 1 });
+            T.palabra(vis.ch, '¡CLAVADO!', PX, PY, T.AMARILLO, 58, 1, true);
+            vis.temblor = 9; son && son.clavado();
+          } else if (x.q === 'bien') {
+            T.rayitas(vis.ch, px, py, 6, T.PAPEL, 28, 56, 1);
+            T.palabra(vis.ch, '¡BIEN!', PX, PY, T.PAPEL, 58, 1, true);
+            vis.temblor = 5; son && son.acierto();
+          } else {
+            T.palabra(vis.ch, 'JUSTITO', PX, PY, T.PAPEL, 50, 1, true);
+            vis.temblor = 4; son && son.golpe();
+          }
+        }
+        son && son.corte();
+      } else if (x.t === 'aire') {
+        vis.golpe = 0; vis.temblor = 4;
+        T.palabra(vis.ch, '¿EH?', PX, PY, T.PAPEL, 56, 1, true);
+        son && son.fallo();
+      } else if (x.t === 'pasada') {
+        const m = e.marcas[x.i];
+        T.palabra(vis.ch, '¡SE VA!', PX, PY, T.ROJO, 54, 1, true);
+        son && son.fallo();
+      }
+    }
+    if (vis.golpe !== undefined) vis.golpe++;
+  }
+
+  ZZ.canales.cocina = {
+    id: 'cocina', num: 1, nombre: 'COCINA', orden: '¡CORTA!',
+    pista: 'Toca cuando la marca llegue al cuchillo',
+    rotulo: 'HOY: CHORIZO EN CINCO SEGUNDOS',
+    color: T.ROJO, color2: T.AMARILLO, color3: T.MENTA,
+    todaLaPantalla: true,
+    animo: x => (x.t === 'corte' ? (x.q === 'fallo' ? -1 : x.q === 'justo' ? 0 : 1) : (x.t === 'pasada' || x.t === 'aire') ? -1 : 0),
+    init, paso, puntuacion, casa, dibuja, efectos,
+  };
+})();
+//# sourceURL=zz/canales/cocina.js
+</script>
+<script>
+/* ZikZak · canal 2 · El tiempo · ¡DESPEJA!
+   Las nubes tapan el sol. Se arrastran y se lanzan fuera hasta dejarlo limpio.
+   Mide la rapidez: cuanto antes quede despejado, más puntos. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ, T = ZZ.tinta, P = ZZ.personaje;
+
+  const SOL = { x: 320, y: 384, r: 124 };
+  const BORDE = 20;
+  const NIV = [null,
+    { n: 3, viento: 0, pes: 0, r: 88 },
+    { n: 5, viento: 0.45, pes: 1, r: 80 },
+    { n: 6, viento: 0.8, pes: 2, r: 76 }];
+
+  // --- lógica ---------------------------------------------------------------
+  const lejos = c => Math.hypot(c.x - SOL.x, c.y - SOL.y);
+  const libre = c => c.fuera || lejos(c) > SOL.r + c.r * 0.6;
+
+  function init(semilla, nivel) {
+    const rng = ZZ.azar(semilla), N = NIV[nivel];
+    const nubes = [], giro = rng.entre(0, 6.28);
+    for (let i = 0; i < N.n; i++) {
+      const a = giro + i / N.n * 6.2832 + rng.entre(-0.35, 0.35), d = i === 0 ? rng.entre(0, 18) : rng.entre(34, 84);
+      nubes.push({ x: SOL.x + Math.cos(a) * d, y: SOL.y + Math.sin(a) * d * 0.8, vx: 0, vy: 0, r: N.r * rng.entre(0.94, 1.06), pesada: i < N.pes, fuera: false, cara: rng.entero(0, 2) });
+    }
+    return { semilla, nivel, nubes, viento: N.viento, agarrada: -1, ox: 0, oy: 0, despejado: false, pasoClaro: -1, hecho: false, ev: [] };
+  }
+
+  function paso(e, entradas, n) {
+    let movida = false;
+    for (const en of entradas) {
+      if (en.t === 'd') {
+        if (e.agarrada >= 0) continue;
+        for (let i = e.nubes.length - 1; i >= 0; i--) {
+          const c = e.nubes[i];
+          if (c.fuera || Math.hypot(c.x - en.x, c.y - en.y) > c.r * 1.05) continue;
+          e.agarrada = i; e.ox = c.x - en.x; e.oy = c.y - en.y; c.vx = 0; c.vy = 0;
+          e.ev.push({ t: 'agarra', i });
+          break;
+        }
+      } else if (en.t === 'm') {
+        if (e.agarrada < 0) continue;
+        const c = e.nubes[e.agarrada], k = c.pesada ? 0.4 : 1;
+        const nx = c.x + (en.x + e.ox - c.x) * k, ny = c.y + (en.y + e.oy - c.y) * k;
+        c.vx = c.vx * 0.4 + (nx - c.x) * 0.6; c.vy = c.vy * 0.4 + (ny - c.y) * 0.6;
+        c.x = nx; c.y = ny; movida = true;
+      } else if (en.t === 'u') {
+        if (e.agarrada < 0) continue;
+        const c = e.nubes[e.agarrada], f = c.pesada ? 0.8 : 1.15;
+        c.vx = ZZ.lim(c.vx * f, -40, 40); c.vy = ZZ.lim(c.vy * f, -40, 40);
+        e.ev.push({ t: 'suelta', i: e.agarrada, v: Math.hypot(c.vx, c.vy) });
+        e.agarrada = -1;
+      }
+    }
+    for (let i = 0; i < e.nubes.length; i++) {
+      const c = e.nubes[i];
+      if (c.fuera) continue;
+      if (i === e.agarrada) { if (!movida) { c.vx *= 0.5; c.vy *= 0.5; } }
+      else {
+        c.x += c.vx; c.y += c.vy;
+        const roz = c.pesada ? 0.9 : 0.95;
+        c.vx *= roz; c.vy *= roz;
+        const d = lejos(c);
+        if (e.viento > 0 && Math.hypot(c.vx, c.vy) < 1.5 && d > 6) { c.x += (SOL.x - c.x) / d * e.viento; c.y += (SOL.y - c.y) / d * e.viento; }
+      }
+      if (c.x < BORDE || c.x > ZZ.PW - BORDE || c.y < BORDE || c.y > ZZ.PH - BORDE) {
+        c.fuera = true;
+        if (i === e.agarrada) e.agarrada = -1;
+        e.ev.push({ t: 'fuera', i, x: c.x, y: c.y, vx: c.vx, vy: c.vy });
+      }
+    }
+    if (!e.despejado && e.nubes.every(libre)) {
+      e.despejado = true; e.pasoClaro = n; e.hecho = true;
+      e.ev.push({ t: 'claro' });
+    }
+  }
+
+  function puntuacion(e) {
+    if (e.despejado) return 400 + Math.round(600 * (1 - e.pasoClaro / ZZ.PASOS));
+    return Math.round(380 * e.nubes.filter(libre).length / e.nubes.length);
+  }
+
+  // Jugador de la casa: coge la nube que más tapa y la arrastra hacia fuera.
+  function casa(e, mem, rng, d, n) {
+    if (mem.fase === undefined) { mem.fase = 'espera'; mem.hasta = Math.round(ZZ.mix(34, 12, d) + rng.entre(0, 18)); }
+    if (e.despejado) return [];
+    if (mem.fase === 'espera') {
+      if (n < mem.hasta) return [];
+      let j = -1, mejor = 1e9;
+      e.nubes.forEach((c, i) => { if (libre(c)) return; const dd = lejos(c); if (dd < mejor) { mejor = dd; j = i; } });
+      if (j < 0) { mem.hasta = n + 6; return []; }
+      const c = e.nubes[j], sig = ZZ.mix(30, 5, d);
+      mem.x = ZZ.lim(Math.round(c.x + rng.campana() * sig), 0, ZZ.PW);
+      mem.y = ZZ.lim(Math.round(c.y + rng.campana() * sig), 0, ZZ.PH);
+      mem.ang = mejor < 12 ? rng.entre(0, 6.28) : Math.atan2(c.y - SOL.y, c.x - SOL.x) + rng.campana() * ZZ.mix(0.5, 0.12, d);
+      mem.vel = ZZ.mix(12, 30, d) * (c.pesada ? 1.2 : 1);
+      mem.fin = n + Math.round(ZZ.mix(22, 9, d) * (c.pesada ? 1.7 : 1) + rng.entre(0, 6));
+      mem.fase = 'arrastra'; mem.ini = n;
+      return [{ t: 'd', x: mem.x, y: mem.y }];
+    }
+    const pausa = () => { mem.fase = 'espera'; mem.hasta = n + Math.round(ZZ.mix(18, 5, d) + rng.entre(0, 14)); };
+    if (e.agarrada < 0) { pausa(); return [{ t: 'u', x: mem.x, y: mem.y }]; }
+    if (n >= mem.fin) { pausa(); return [{ t: 'u', x: mem.x, y: mem.y }]; }
+    mem.x = ZZ.lim(Math.round(mem.x + Math.cos(mem.ang) * mem.vel), 0, ZZ.PW);
+    mem.y = ZZ.lim(Math.round(mem.y + Math.sin(mem.ang) * mem.vel), 0, ZZ.PH);
+    return [{ t: 'm', x: mem.x, y: mem.y }];
+  }
+
+  // --- dibujo -----------------------------------------------------------------
+  // El mapa del tiempo: la península, con sus vecinos, sus isobaras y sus temperaturas.
+  const geo = (lon, lat) => [20 + (lon + 10.2) * 44, 232 + (44.4 - lat) * 62];
+  const COSTA = [[-9.3, 42.9], [-8.4, 43.5], [-7.7, 43.8], [-5.8, 43.6], [-3.8, 43.5], [-1.8, 43.4], [0.7, 42.8], [3.3, 42.3], [3.2, 41.9],
+    [2.2, 41.3], [0.9, 40.7], [-0.3, 39.5], [0.2, 38.8], [-0.5, 38.3], [-0.7, 37.6], [-1.9, 36.9], [-2.2, 36.7], [-4.4, 36.7], [-5.6, 36.0],
+    [-6.3, 36.6], [-7.4, 37.2], [-7.9, 37.0], [-9.0, 37.0], [-8.8, 38.4], [-9.5, 38.8], [-9.4, 39.4], [-8.9, 40.2], [-8.7, 41.2], [-8.9, 42.2]];
+  const FRANCIA = [[-1.8, 43.4], [-1.3, 44.6], [-1.2, 46.4], [5, 46.4], [5, 43.2], [3.3, 42.4], [0.7, 42.9]];
+  const AFRICA = [[-7.4, 35.2], [-5.9, 35.8], [-5.3, 35.9], [-4.2, 35.2], [-2.9, 35.3], [-1.4, 35.0], [0.4, 35.6], [0.4, 33.6], [-7.4, 33.6]];
+  function suave(g, pts) {
+    const q = pts.map(p => geo(p[0], p[1])), n = q.length;
+    const med = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const m0 = med(q[n - 1], q[0]);
+    g.beginPath(); g.moveTo(m0[0], m0[1]);
+    for (let i = 0; i < n; i++) { const m = med(q[i], q[(i + 1) % n]); g.quadraticCurveTo(q[i][0], q[i][1], m[0], m[1]); }
+    g.closePath();
+  }
+  function fondo(g) {
+    g.fillStyle = T.AZUL; g.fillRect(0, 0, ZZ.PW, ZZ.PH);
+    g.fillStyle = T.trama(g, T.mezcla(T.AZUL, T.TINTA, 0.2), 13, 2.6); g.fillRect(0, 0, ZZ.PW, ZZ.PH);
+    // isobaras, por el mar
+    g.save(); g.globalAlpha = 0.5; g.setLineDash([16, 13]);
+    for (const [x, y, r] of [[96, 176, 78], [96, 176, 130], [560, 690, 76], [560, 690, 128]]) { T.circ(g, x, y, r); T.linea(g, 5, T.PAPEL); }
+    g.restore();
+    // los vecinos, en un tono apagado
+    const vecino = '#CFC6AE';   // la tierra de los vecinos, en un tono de arena apagado
+    suave(g, FRANCIA); T.pinta(g, vecino, 5);
+    suave(g, AFRICA); T.pinta(g, vecino, 5);
+    // la península y las islas
+    T.sombra(g, c => suave(c, COSTA), 6, 9, 0.3);
+    T.vol(g, c => suave(c, COSTA), T.MENTA, { sombra: T.oscuro(T.MENTA, 0.2), dx: -7, dy: -9, w: 7 });
+    for (const [lon, lat, rx, ry] of [[2.9, 39.6, 25, 16], [1.4, 38.9, 12, 9]]) {
+      const q = geo(lon, lat);
+      T.vol(g, c => T.elip(c, q[0], q[1], rx, ry, -0.3), T.MENTA, { sombra: T.oscuro(T.MENTA, 0.2), dx: -3, dy: -4, w: 5.5 });
+    }
+    // la A de anticiclón y la B de borrasca, cada una en su disco
+    for (const [x, y, l, c] of [[96, 176, 'A', T.ROJO], [560, 690, 'B', T.AZUL]]) {
+      T.circ(g, x + 4, y + 6, 40); T.pinta(g, T.TINTA, 0);
+      T.circ(g, x, y, 40); T.pinta(g, T.PAPEL, 6);
+      T.texto(g, l, x, y + 3, 50, { color: c, w: 0 });
+    }
+    // ciudades con su temperatura
+    for (const [lon, lat, t, lado] of [[-6.0, 37.4, '34°', 1], [-0.4, 39.5, '29°', -1], [-9.1, 38.7, '26°', 1]]) {
+      const q = geo(lon, lat);
+      T.circ(g, q[0], q[1], 8); T.pinta(g, T.ROJO, 5);
+      const x = q[0] + lado * 44;
+      T.rr(g, x - 30, q[1] - 17, 60, 34, 12); T.pinta(g, T.PAPEL, 4.5);
+      T.texto(g, t, x + 1, q[1] + 1, 21, { fuente: T.F_UI, peso: 900, w: 0, color: T.TINTA });
+    }
+  }
+
+  const BULTOS = [[-50, 12, 34], [-22, -20, 40], [26, -14, 37], [56, 14, 30], [2, 22, 40]];
+  function caminoNube(g, extra) {
+    g.beginPath();
+    for (const [x, y, r] of BULTOS) { g.moveTo(x + r + extra, y); g.arc(x, y, r + extra, 0, 6.2832); }
+  }
+  const CARAS = ['neutro', 'triste', 'tension'];
+  function nube(g, c, t, agarrada, sinCara) {
+    const s = c.r / 86 * (agarrada ? 1.08 : 1);
+    g.save();
+    g.translate(c.x, c.y + (agarrada ? 0 : Math.sin(t * 0.06 + c.r) * 3));
+    g.rotate(ZZ.lim(c.vx * 0.014, -0.3, 0.3));
+    g.scale(s, s);
+    g.save(); g.globalAlpha = 0.13; g.translate(12, 20); caminoNube(g, 6); g.fillStyle = T.TINTA; g.fill(); g.restore();
+    caminoNube(g, 6.5); g.fillStyle = T.TINTA; g.fill();
+    const base = c.pesada ? '#7C71B4' : '#FFFFFF', som = c.pesada ? '#564B8A' : '#C9D6F5';
+    T.vol(g, x => caminoNube(x, 0), base, { sombra: som, dx: -6, dy: -11, w: 0 });
+    if (c.pesada && !sinCara) {
+      T.poli(g, [[-4, 52], [22, 52], [8, 76], [26, 76], [-10, 116], [-2, 86], [-18, 86]]); T.pinta(g, T.AMARILLO, 5.5);
+    }
+    if (!sinCara) {
+      g.translate(0, 2); g.scale(0.9, 0.9);
+      P.cara(g, agarrada ? 'susto' : c.pesada ? 'enfadado' : CARAS[c.cara], t + c.r * 7, { ex: 19, ey: -6, by: 22, piel: base });
+    }
+    g.restore();
+  }
+
+  function sol(g, e, vis) {
+    const t = vis.t, claro = e.despejado;
+    const libres = e.nubes.filter(libre).length / e.nubes.length;
+    const kc = claro ? Math.min(1, (t - (vis.tClaro || t)) / 16) : 0;
+    g.save(); g.translate(SOL.x, SOL.y);
+    const late = claro ? 1 + Math.sin(t * 0.32) * 0.035 + ZZ.e.rebote(kc) * 0.12 : 1;
+    g.scale(late, late);
+    const R = SOL.r + (claro ? 70 + Math.sin(t * 0.4) * 9 : 30 + libres * 18);
+    g.save(); g.rotate(t * (claro ? 0.022 : 0.005));
+    for (let i = 0; i < 12; i++) {
+      g.rotate(Math.PI / 6);
+      T.poli(g, [[-22, -SOL.r + 8], [22, -SOL.r + 8], [0, -R]]); T.pinta(g, T.AMARILLO, 6);
+    }
+    g.restore();
+    T.vol(g, c => T.circ(c, 0, 0, SOL.r), '#FFD84A', { sombra: '#F2A81E', dx: -10, dy: -13, w: 7 });
+    g.save(); g.globalAlpha = 0.34; g.fillStyle = T.ROJO; T.circ(g, -72, 30, 20); g.fill(); T.circ(g, 72, 30, 20); g.fill(); g.restore();
+    g.save(); g.scale(2.05, 2.05);
+    const ag = e.agarrada >= 0 ? e.nubes[e.agarrada] : null;
+    const mira = ag ? { x: ZZ.lim((ag.x - SOL.x) / 120, -1, 1), y: ZZ.lim((ag.y - SOL.y) / 120, -1, 1) } : null;
+    P.cara(g, claro ? 'euforico' : libres > 0.6 ? 'contento' : libres > 0.3 ? 'neutro' : 'triste', t, { ex: 24, ey: -8, by: 22, piel: '#FFD84A', mira });
+    g.restore();
+    if (claro) {
+      // gafas de sol que caen del cielo
+      const kg = ZZ.e.outBack(ZZ.lim((t - vis.tClaro - 6) / 14, 0, 1));
+      g.save(); g.translate(0, -18 - (1 - kg) * 330); g.rotate((1 - kg) * -0.5);
+      g.beginPath(); g.moveTo(-104, -6); g.lineTo(104, -6); T.linea(g, 10);
+      for (const sg of [-1, 1]) {
+        T.vol(g, c => { c.beginPath(); c.moveTo(sg * 8, -16); c.lineTo(sg * 92, -16); c.quadraticCurveTo(sg * 96, 34, sg * 52, 36); c.quadraticCurveTo(sg * 10, 34, sg * 8, -16); c.closePath(); }, '#3A3350', { sombra: T.TINTA, dx: -5, dy: -6, w: 7 });
+        g.beginPath(); g.moveTo(sg * 50 - 22, -4); g.lineTo(sg * 50 - 8, 14); T.linea(g, 5, T.PAPEL);
+      }
+      g.restore();
+    }
+    g.restore();
+  }
+
+  function dibuja(g, e, vis) {
+    T.capa(g, vis, 'tiempo', fondo);
+    sol(g, e, vis);
+    vis.ch.dibuja(g, 0);
+    for (let i = 0; i < e.nubes.length; i++) {
+      const c = e.nubes[i];
+      if (c.fuera || i === e.agarrada) continue;
+      // la nube que queda tapada por otra no enseña media cara
+      let tapada = false;
+      for (let j = 0; j < e.nubes.length && !tapada; j++) {
+        const o = e.nubes[j];
+        if (j === i || o.fuera || (j < i && j !== e.agarrada)) continue;
+        tapada = Math.hypot(o.x - c.x, o.y - c.y) < c.r * 1.05;
+      }
+      nube(g, c, vis.t, false, tapada);
+    }
+    if (e.agarrada >= 0) nube(g, e.nubes[e.agarrada], vis.t, true);
+    vis.ch.dibuja(g, 1);
+  }
+
+  function efectos(e, vis, ev, son) {
+    for (const x of ev) {
+      if (x.t === 'agarra') { son && son.agarra(); }
+      else if (x.t === 'suelta') { if (x.v > 6) son && son.soplo(); }
+      else if (x.t === 'fuera') {
+        const c = e.nubes[x.i], copia = { x: 0, y: 0, vx: x.vx, r: c.r, pesada: c.pesada, cara: c.cara };
+        const d = Math.hypot(x.vx, x.vy) || 1, v = Math.max(16, d);
+        vis.ch.mas({ tipo: 'dib', x: x.x, y: x.y, vx: x.vx / d * v, vy: x.vy / d * v, vida: 22, capa: 1,
+          dib: (cc) => nube(cc, copia, vis.t, true) });
+        T.polvo(vis.ch, ZZ.lim(x.x, 30, ZZ.PW - 30), ZZ.lim(x.y, 30, ZZ.PH - 30), 6, '#FFFFFF', 6, 16, 1);
+        T.palabra(vis.ch, '¡FUERA!', ZZ.lim(x.x, 170, ZZ.PW - 170), 150, T.PAPEL, 50, 1);
+        son && son.soplo();
+      } else if (x.t === 'claro') {
+        vis.tClaro = vis.t; vis.temblor = 10;
+        T.estrellas(vis.ch, SOL.x, SOL.y, 12, T.AMARILLO, 15, 24, 1);
+        vis.ch.mas({ tipo: 'anillo', x: SOL.x, y: SOL.y, r: SOL.r, R: 420, w: 22, color: '#FFFFFF', vida: 22, capa: 0 });
+        son && son.sol();
+      }
+    }
+  }
+
+  ZZ.canales.tiempo = {
+    id: 'tiempo', num: 2, nombre: 'EL TIEMPO', orden: '¡DESPEJA!', hechoTxt: '¡SOLAZO!',
+    pista: 'Arrastra las nubes fuera de la pantalla',
+    rotulo: 'MAÑANA: SOL, SI TE DAS PRISA',
+    color: T.AZUL, color2: T.AMARILLO, color3: T.MENTA,
+    arrastra: true,
+    animo: x => (x.t === 'fuera' || x.t === 'claro' ? 1 : 0),
+    init, paso, puntuacion, casa, dibuja, efectos,
+  };
+})();
+//# sourceURL=zz/canales/tiempo.js
+</script>
+<script>
+/* ZikZak · canal 3 · Western · ¡DISPARA!
+   Saltan latas por detrás de la valla y se toca encima de cada una.
+   Mide la puntería: cuenta acertar, acertar en el centro y hacerlo pronto. Fallar gasta balas. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ, T = ZZ.tinta;
+
+  const Y0 = 700;          // de dónde salen las latas (queda tapado por la valla)
+  const VALLA = 628;       // borde de arriba de la valla
+  const NIV = [null,
+    { n: 3, r: 50, balas: 6, g: 0.34, ini: 20, hueco: 80, alto: [150, 330], gallina: false },
+    { n: 4, r: 44, balas: 6, g: 0.38, ini: 14, hueco: 60, alto: [140, 340], gallina: false },
+    { n: 5, r: 38, balas: 7, g: 0.44, ini: 12, hueco: 46, alto: [130, 350], gallina: true }];
+
+  const C = {
+    cielo: ['#33257F', T.VIOLETA, T.ROJO, '#FF8A3C', T.AMARILLO],
+    roca: '#43318A', rocaS: '#2A1F5C', arena: '#E9792B', arenaS: '#C25A1C',
+    madera: '#A9632F', maderaS: '#7A4220', lata: '#CFD9E0', lataS: '#98A7B4',
+  };
+
+  // --- lógica ---------------------------------------------------------------
+  function hazObjeto(rng, N, s0, gallina) {
+    const apice = rng.entre(N.alto[0], N.alto[1]);
+    const vy = -Math.sqrt(2 * N.g * (Y0 - apice));
+    const T2 = Math.floor(-2 * vy / N.g);
+    const x0 = rng.entre(110, 530), x1 = ZZ.lim(x0 + rng.entre(-190, 190), 90, 550);
+    return { s0, x0, y0: Y0, vx: (x1 - x0) / T2, vy, g: N.g, dura: T2, r: gallina ? N.r + 6 : N.r, gallina: !!gallina,
+      dado: -1, caido: false, giro: rng.entre(0.09, 0.17) * (rng() < 0.5 ? -1 : 1) };
+  }
+  function donde(o, n) {
+    const t = n - o.s0;
+    return [o.x0 + o.vx * t, o.y0 + o.vy * t + o.g * t * t / 2];
+  }
+  const enElAire = (o, n) => o.dado < 0 && !o.caido && n >= o.s0 && n < o.s0 + o.dura;
+
+  function init(semilla, nivel) {
+    const rng = ZZ.azar(semilla), N = NIV[nivel];
+    const objs = [];
+    for (let i = 0; i < N.n; i++) objs.push(hazObjeto(rng, N, N.ini + i * N.hueco + rng.entero(-6, 6), false));
+    if (N.gallina) objs.push(hazObjeto(rng, N, rng.entero(40, 170), true));
+    return { semilla, nivel, objs, latas: N.n, balas: N.balas, balasMax: N.balas, suma: 0, fallos: 0, pena: 0, espera: 0, hecho: false, ev: [] };
+  }
+
+  function paso(e, entradas, n) {
+    for (let i = 0; i < e.objs.length; i++) if (e.objs[i].s0 === n) e.ev.push({ t: 'lanza', i });
+    for (const en of entradas) {
+      if (en.t !== 'd') continue;
+      if (e.balas <= 0) { e.ev.push({ t: 'clic', x: en.x, y: en.y }); continue; }
+      e.balas--;
+      let j = -1, mejor = 1e9;
+      for (let i = 0; i < e.objs.length; i++) {
+        const o = e.objs[i];
+        if (!enElAire(o, n)) continue;
+        const p = donde(o, n);
+        if (p[1] > VALLA + 30) continue;                 // tapada por la valla
+        const d = Math.hypot(p[0] - en.x, p[1] - en.y);
+        if (d <= o.r + 8 && d < mejor) { mejor = d; j = i; }
+      }
+      if (j < 0) { e.fallos++; e.ev.push({ t: 'aire', x: en.x, y: en.y }); continue; }
+      const o = e.objs[j], p = donde(o, n);
+      o.dado = n;
+      if (o.gallina) { e.pena += 150; e.ev.push({ t: 'gallina', i: j, x: p[0], y: p[1], tx: en.x, ty: en.y }); continue; }
+      const centro = 1 - mejor / (o.r + 8), pronto = 1 - (n - o.s0) / o.dura;
+      const pts = Math.round(50 + 30 * centro + 20 * pronto);
+      e.suma += pts;
+      e.ev.push({ t: 'lata', i: j, x: p[0], y: p[1], tx: en.x, ty: en.y, pts, pleno: centro > 0.72 });
+    }
+    let quedan = 0;
+    for (let i = 0; i < e.objs.length; i++) {
+      const o = e.objs[i];
+      if (o.dado < 0 && !o.caido && n >= o.s0 + o.dura) { o.caido = true; if (!o.gallina) e.ev.push({ t: 'cae', i }); }
+      if (o.dado < 0 && !o.caido && !o.gallina) quedan++;
+    }
+    if (quedan === 0 && ++e.espera > 22) e.hecho = true;
+  }
+
+  function puntuacion(e) {
+    return ZZ.lim(Math.round((e.suma - 10 * e.fallos - e.pena) * 10 / e.latas), 0, 1000);
+  }
+
+  // Jugador de la casa: tarda en reaccionar y apunta con más o menos tino.
+  function casa(e, mem, rng, d, n) {
+    if (!mem.plan) {
+      mem.plan = [];
+      e.objs.forEach((o, i) => {
+        if (o.gallina) { if (rng() < ZZ.mix(0.35, 0, Math.min(1, d * 1.4))) mem.plan.push({ paso: o.s0 + rng.entero(24, 50), i }); return; }
+        const reac = Math.round(ZZ.mix(48, 17, d) + rng.campana() * ZZ.mix(9, 3, d));
+        mem.plan.push({ paso: o.s0 + ZZ.lim(reac, 8, o.dura - 8), i, otra: rng() < ZZ.mix(0.35, 0.92, d) });
+      });
+    }
+    const sal = [];
+    for (const p of mem.plan.slice()) {
+      if (p.paso !== n) continue;
+      const o = e.objs[p.i];
+      if (!enElAire(o, n) || e.balas - sal.length <= 0) continue;
+      const q = donde(o, n), sig = ZZ.mix(36, 6, d);
+      sal.push({ t: 'd', x: Math.round(ZZ.lim(q[0] + rng.campana() * sig, 0, ZZ.PW)), y: Math.round(ZZ.lim(q[1] + rng.campana() * sig, 0, ZZ.PH)) });
+      if (p.otra) mem.plan.push({ paso: n + Math.round(ZZ.mix(26, 12, d)), i: p.i, otra: false });
+    }
+    return sal;
+  }
+
+  // --- dibujo -----------------------------------------------------------------
+  function franja(g, y, h, color, arriba) {
+    g.fillStyle = color; g.fillRect(0, y, ZZ.PW, h);
+    if (arriba) { g.fillStyle = T.trama(g, arriba, 11, 3.3); g.fillRect(0, y, ZZ.PW, 34); g.fillStyle = T.trama(g, arriba, 11, 1.8); g.fillRect(0, y + 34, ZZ.PW, 24); }
+  }
+  function cactus(g, x, y, s) {
+    g.save(); g.translate(x, y); g.scale(s, s);
+    const brazo = (sg, h0, h1) => c => { c.beginPath(); c.moveTo(0, h0); c.lineTo(sg * 46, h0); c.lineTo(sg * 46, h1); };
+    T.tubo(g, brazo(-1, -90, -138), T.MENTA, 26, 6);
+    T.tubo(g, brazo(1, -124, -182), T.MENTA, 26, 6);
+    T.vol(g, c => T.rr(c, -22, -250, 44, 262, 22), T.MENTA, { dx: -7, dy: 0, w: 6 });
+    g.beginPath();
+    for (const [a, b] of [[-8, -220], [8, -190], [-8, -150], [8, -110], [-8, -70], [8, -40]]) { g.moveTo(a - 4, b); g.lineTo(a + 4, b); }
+    T.linea(g, 4);
+    // una flor de cactus
+    for (let i = 0; i < 5; i++) { const an = i * 1.2566 - 1.57; T.circ(g, Math.cos(an) * 11, -262 + Math.sin(an) * 11, 8); T.pinta(g, T.ROJO, 4); }
+    T.circ(g, 0, -262, 6); T.pinta(g, T.AMARILLO, 4);
+    g.restore();
+  }
+  function fondo(g) {
+    franja(g, 0, 190, C.cielo[0]);
+    franja(g, 190, 150, C.cielo[1], C.cielo[0]);
+    franja(g, 340, 130, C.cielo[2], C.cielo[1]);
+    franja(g, 470, 110, C.cielo[3], C.cielo[2]);
+    franja(g, 580, 80, C.cielo[4], C.cielo[3]);
+    // estrellas
+    g.fillStyle = T.PAPEL;
+    for (const [x, y, r] of [[70, 60, 5], [190, 120, 4], [300, 44, 6], [520, 90, 5], [600, 160, 4], [430, 150, 3.5], [120, 170, 3.5]]) { T.estrella(g, x, y, r * 2, r * 0.8, 4); g.fill(); }
+    // sol
+    g.save(); g.beginPath(); g.rect(0, 0, ZZ.PW, 650); g.clip();
+    T.vol(g, c => T.circ(c, 410, 650, 176), '#FFE48A', { sombra: T.AMARILLO, dx: -10, dy: -12, w: 7 });
+    g.restore();
+    // mesetas
+    T.vol(g, c => T.poli(c, [[-20, 660], [-20, 452], [52, 444], [70, 388], [146, 382], [166, 458], [226, 468], [256, 660]]), C.roca, { sombra: C.rocaS, dx: -10, dy: -4, w: 7 });
+    T.vol(g, c => T.poli(c, [[420, 660], [446, 520], [520, 512], [538, 464], [660, 458], [660, 660]]), C.roca, { sombra: C.rocaS, dx: -10, dy: -4, w: 7 });
+    // arena
+    T.vol(g, c => { c.beginPath(); c.moveTo(-10, 640); c.quadraticCurveTo(160, 610, 330, 636); c.quadraticCurveTo(500, 660, 650, 626); c.lineTo(650, 850); c.lineTo(-10, 850); c.closePath(); }, C.arena, { sombra: C.arenaS, dx: 0, dy: 10, w: 7 });
+    cactus(g, 574, 662, 1);
+  }
+  function valla(g) {
+    const tops = [650, 632, 644, 628, 640, 634, 648, 630, 642];
+    // travesaño
+    T.vol(g, c => T.rr(c, -20, 700, 680, 34, 6), C.maderaS, { sombra: '#5A2F15', dx: 0, dy: -8, w: 6 });
+    for (let i = 0; i < 9; i++) {
+      const x = -14 + i * 76, y = tops[i];
+      T.vol(g, c => T.poli(c, [[x, 860], [x, y + 16], [x + 34, y], [x + 68, y + 16], [x + 68, 860]]), C.madera, { sombra: C.maderaS, dx: -8, dy: 0, w: 6 });
+      g.beginPath(); g.moveTo(x + 22, y + 44); g.quadraticCurveTo(x + 30, y + 110, x + 20, y + 170); T.linea(g, 4, C.maderaS);
+      T.circ(g, x + 34, 716, 5); T.pinta(g, T.TINTA, 0);
+    }
+    // cartel
+    g.save(); g.translate(486, 742); g.rotate(0.06);
+    T.rr(g, -78, -62, 164, 132, 8); T.pinta(g, T.TINTA, 0);
+    T.rr(g, -84, -70, 164, 132, 8); T.pinta(g, T.PAPEL, 6);
+    T.texto(g, 'SE BUSCA', -2, -42, 27, { color: T.TINTA, w: 0 });
+    g.save(); g.translate(-2, 6); g.rotate(-0.2); lata(g, 21); g.restore();
+    T.texto(g, 'VIVA O ABOLLADA', -2, 46, 14.5, { fuente: T.F_UI, peso: 900, w: 0, color: T.TINTA });
+    g.restore();
+  }
+
+  // Una lata con el centro en el origen. r es el radio que cuenta para acertar.
+  function lata(g, r, borde) {
+    const w = r * 1.36, h = r * 1.84;
+    const cam = c => T.rr(c, -w / 2, -h / 2, w, h, r * 0.2);
+    // borde claro de pegatina: la lata se separa de cualquier franja del cielo
+    if (borde) { cam(g); g.lineJoin = 'round'; g.lineWidth = Math.max(4, r * 0.13) + 13; g.strokeStyle = T.PAPEL; g.stroke(); }
+    T.vol(g, cam, C.lata, { sombra: C.lataS, dx: -r * 0.2, dy: 0, w: Math.max(4, r * 0.13) });
+    g.save(); cam(g); g.clip();
+    g.fillStyle = T.ROJO; g.fillRect(-w / 2, -h * 0.26, w, h * 0.52);
+    g.fillStyle = T.oscuro(T.ROJO, 0.25); g.fillRect(w / 2 - r * 0.2, -h * 0.26, r * 0.2, h * 0.52);
+    g.restore();
+    T.circ(g, 0, 0, r * 0.36); T.pinta(g, T.PAPEL, Math.max(3, r * 0.09));
+    T.estrella(g, 0, 0, r * 0.25, r * 0.11, 5); T.pinta(g, T.AMARILLO, Math.max(2.5, r * 0.07));
+    g.beginPath(); g.moveTo(-w / 2, -h * 0.26); g.lineTo(w / 2, -h * 0.26); g.moveTo(-w / 2, h * 0.26); g.lineTo(w / 2, h * 0.26);
+    g.moveTo(-w / 2 + 4, -h * 0.4); g.lineTo(w / 2 - 4, -h * 0.4); g.moveTo(-w / 2 + 4, h * 0.4); g.lineTo(w / 2 - 4, h * 0.4);
+    T.linea(g, Math.max(3, r * 0.09));
+    cam(g); T.linea(g, Math.max(4, r * 0.13));
+  }
+  function gallina(g, r, t, susto) {
+    const al = Math.sin(t * 0.7) * 0.5;
+    T.vol(g, c => T.poli(c, [[-r * 0.9, -r * 0.1], [-r * 1.5, -r * 0.6], [-r * 1.3, r * 0.1], [-r * 1.55, r * 0.5], [-r * 0.8, r * 0.4]]), T.PAPEL, { sombra: '#DDD0B4', dx: -2, dy: -3, w: 5 });
+    T.vol(g, c => T.elip(c, 0, 0, r, r * 0.8), T.PAPEL, { sombra: '#DDD0B4', dx: -5, dy: -6, w: 6 });
+    g.save(); g.translate(-r * 0.1, -r * 0.1); g.rotate(al - 0.5);
+    T.vol(g, c => T.elip(c, -r * 0.1, -r * 0.5, r * 0.34, r * 0.66), T.PAPEL, { sombra: '#DDD0B4', dx: -2, dy: -3, w: 5 });
+    g.restore();
+    T.vol(g, c => T.circ(c, r * 0.86, -r * 0.62, r * 0.46), T.PAPEL, { sombra: '#DDD0B4', dx: -3, dy: -4, w: 6 });
+    for (const [x, y] of [[0.7, -1.1], [0.9, -1.16], [1.08, -1.06]]) { T.circ(g, r * x, r * y, r * 0.13); T.pinta(g, T.ROJO, 4.5); }
+    T.poli(g, [[r * 1.26, -r * 0.7], [r * 1.66, -r * 0.56], [r * 1.26, -r * 0.42]]); T.pinta(g, T.AMARILLO, 5);
+    T.circ(g, r * 0.96, -r * 0.7, susto ? r * 0.17 : r * 0.12); T.pinta(g, '#FFFFFF', 4);
+    T.circ(g, r * 0.98, -r * 0.7, r * 0.06); T.pinta(g, T.TINTA, 0);
+    T.circ(g, r * 1.02, -r * 0.34, r * 0.12); T.pinta(g, T.ROJO, 4);
+  }
+  function bala(g, x, y, llena) {
+    g.save(); g.translate(x, y); g.scale(1.35, 1.35);
+    if (!llena) {
+      // gastada: solo el contorno, en claro, para que se vea sobre la valla
+      g.globalAlpha = 0.9;
+      g.beginPath(); g.moveTo(-9, 20); g.lineTo(-9, -8); g.quadraticCurveTo(-9, -24, 0, -26); g.quadraticCurveTo(9, -24, 9, -8); g.lineTo(9, 20); g.closePath();
+      g.setLineDash([5, 5]); T.linea(g, 3.2, T.PAPEL); g.setLineDash([]);
+      g.restore();
+      return;
+    }
+    if (llena) {
+      T.vol(g, c => { c.beginPath(); c.moveTo(-9, 20); c.lineTo(-9, -8); c.quadraticCurveTo(-9, -24, 0, -26); c.quadraticCurveTo(9, -24, 9, -8); c.lineTo(9, 20); c.closePath(); }, T.AMARILLO, { dx: -4, dy: 0, w: 5 });
+      g.beginPath(); g.moveTo(-9, -6); g.lineTo(9, -6); T.linea(g, 4);
+    } else {
+      g.globalAlpha = 0.45; T.rr(g, -9, -6, 18, 26, 4); T.pinta(g, T.TINTA, 0);
+    }
+    g.restore();
+  }
+  function rodadora(g, x, y, r, giro) {
+    g.save(); g.translate(x, y); g.rotate(giro);
+    T.circ(g, 0, 0, r); T.pinta(g, '#D9A25A', 5);
+    g.beginPath();
+    for (let i = 0; i < 5; i++) { const a = i * 1.3; g.moveTo(Math.cos(a) * r * 0.9, Math.sin(a) * r * 0.9); g.quadraticCurveTo(0, 0, Math.cos(a + 2.2) * r * 0.9, Math.sin(a + 2.2) * r * 0.9); }
+    T.linea(g, 3.5, '#8A5A22');
+    g.restore();
+  }
+
+  function dibuja(g, e, vis) {
+    const n = vis.n, t = vis.t;
+    T.capa(g, vis, 'western', fondo);
+    // una rodadora cruza el desierto
+    const rx = ((t * 2.1 + 200) % 900) - 120;
+    rodadora(g, rx, 612 - Math.abs(Math.sin(t * 0.09)) * 26, 24, t * 0.13);
+    // agujeros de los tiros que no dieron en nada
+    for (const a of vis.agujeros || []) {
+      T.estrella(g, a.x, a.y, 19, 8, 7, a.rot); T.pinta(g, T.TINTA, 0);
+      T.circ(g, a.x, a.y, 5.5); T.pinta(g, T.PAPEL, 0);
+    }
+    vis.ch.dibuja(g, 0);
+    for (const o of e.objs) {
+      if (!enElAire(o, n)) continue;
+      const p = donde(o, n);
+      g.save(); g.translate(p[0], p[1]);
+      if (o.gallina) { g.rotate(Math.sin(t * 0.3) * 0.25); gallina(g, o.r * 0.62, t, false); }
+      else { g.rotate((n - o.s0) * o.giro); lata(g, o.r, true); }
+      g.restore();
+    }
+    T.capa(g, vis, 'westernValla', valla);
+    // balas
+    for (let i = 0; i < e.balasMax; i++) bala(g, 44 + i * 40, 790, i < e.balas);
+    vis.ch.dibuja(g, 1);
+    // fogonazo
+    if (vis.fogonazo && t - vis.fogonazo.t < 5) {
+      const k = (t - vis.fogonazo.t) / 5, f = vis.fogonazo;
+      if (f.gris) { T.estrella(g, f.x, f.y, 34 * (1 - k * 0.4), 14, 7, f.rot); T.pinta(g, '#D8D2C6', 5); }
+      else {
+        T.estrella(g, f.x, f.y, 62 * (1 - k * 0.4), 24, 8, f.rot); T.pinta(g, T.AMARILLO, 6);
+        T.estrella(g, f.x, f.y, 30 * (1 - k * 0.4), 12, 8, f.rot + 0.4); T.pinta(g, '#FFFFFF', 0);
+      }
+    }
+  }
+
+  function efectos(e, vis, ev, son) {
+    for (const x of ev) {
+      if (x.t === 'lata' || x.t === 'aire' || x.t === 'gallina') {
+        const tx = x.tx === undefined ? x.x : x.tx, ty = x.ty === undefined ? x.y : x.ty;
+        vis.fogonazo = { x: tx, y: ty, t: vis.t, rot: Math.random() * 3, gris: x.t === 'aire' };
+        vis.temblor = x.t === 'aire' ? 4 : 7;
+        son && son.tiro();
+      }
+      if (x.t === 'lata') {
+        const o = e.objs[x.i], dir = Math.sign(x.x - x.tx) || (Math.random() < 0.5 ? -1 : 1);
+        const dx = x.tx - x.x, dy = x.ty - x.y, r = o.r, rot0 = (o.dado - o.s0) * o.giro;
+        vis.ch.mas({ tipo: 'dib', x: x.x, y: x.y, vx: dir * (5 + Math.random() * 3) + o.vx, vy: -11, g: 0.6, rot: rot0, vr: dir * 0.42, vida: 46, capa: 0,
+          dib: (c, p, k) => {
+            c.globalAlpha = k > 0.75 ? (1 - k) * 4 : 1;
+            lata(c, r);
+            const hx = dx * Math.cos(-rot0) - dy * Math.sin(-rot0), hy = dx * Math.sin(-rot0) + dy * Math.cos(-rot0);
+            T.estrella(c, ZZ.lim(hx, -r * 0.5, r * 0.5), ZZ.lim(hy, -r * 0.7, r * 0.7), r * 0.34, r * 0.14, 6, 0.3); T.pinta(c, T.TINTA, 0);
+          } });
+        T.estrellas(vis.ch, x.x, x.y, x.pleno ? 8 : 5, T.AMARILLO, 9, x.pleno ? 20 : 14, 1);
+        T.rayitas(vis.ch, x.x, x.y, 7, T.PAPEL, 30, o.r, 1);
+        if (x.pleno) vis.ch.mas({ tipo: 'anillo', x: x.x, y: x.y, r: 30, R: 140, w: 14, color: '#FFFFFF', vida: 16, capa: 1 });
+        T.palabra(vis.ch, x.pleno ? '¡PLENO!' : '¡PAM!', ZZ.lim(x.x, 170, 470), 150, x.pleno ? T.AMARILLO : T.PAPEL, x.pleno ? 58 : 52, 1);
+        vis.parada = 2;
+        son && son.lata();
+      } else if (x.t === 'aire') {
+        vis.agujeros = vis.agujeros || [];
+        if (x.y < VALLA) vis.agujeros.push({ x: x.x, y: x.y, rot: Math.random() * 3 });
+        T.polvo(vis.ch, x.x, x.y, 4, T.PAPEL, 3, 9, 1);
+      } else if (x.t === 'gallina') {
+        const o = e.objs[x.i];
+        for (let i = 0; i < 9; i++) {
+          vis.ch.mas({ tipo: 'dib', x: x.x, y: x.y, vx: (Math.random() - 0.5) * 9, vy: -3 - Math.random() * 5, g: 0.16, roz: 0.95, vr: (Math.random() - 0.5) * 0.3, vida: 50, capa: 1,
+            dib: (c, p, k) => { c.globalAlpha = 1 - k * k; T.elip(c, 0, 0, 13, 6); T.pinta(c, T.PAPEL, 4); } });
+        }
+        vis.ch.mas({ tipo: 'dib', x: x.x, y: x.y, vx: (Math.random() - 0.5) * 6, vy: -13, g: 0.5, vr: 0.3, vida: 60, capa: 0,
+          dib: (c) => gallina(c, o.r * 0.62, vis.t, true) });
+        T.palabra(vis.ch, '¡LA GALLINA NO!', 320, 150, T.ROJO, 44, 1);
+        vis.temblor = 12;
+        son && son.cacareo();
+      } else if (x.t === 'cae') {
+        const o = e.objs[x.i], p = donde(o, o.s0 + o.dura);
+        T.palabra(vis.ch, '¡SE ESCAPA!', ZZ.lim(p[0], 170, 470), 150, T.ROJO, 44, 1);
+        son && son.fallo();
+      } else if (x.t === 'clic') {
+        T.palabra(vis.ch, 'SIN BALAS', 320, 150, T.PAPEL, 44, 1);
+        son && son.golpe();
+      } else if (x.t === 'lanza') {
+        const o = e.objs[x.i];
+        T.polvo(vis.ch, o.x0, VALLA + 6, 4, '#F3C58E', 4, 13, 0);
+      }
+    }
+  }
+
+  ZZ.canales.western = {
+    id: 'western', num: 3, nombre: 'WESTERN', orden: '¡DISPARA!',
+    pista: 'Toca cada lata antes de que caiga',
+    rotulo: 'SESIÓN DE TARDE: «POR UN PUÑADO DE LATAS»',
+    color: '#E9792B', color2: T.VIOLETA, color3: T.AMARILLO,
+    animo: x => (x.t === 'lata' ? 1 : (x.t === 'aire' || x.t === 'cae' || x.t === 'gallina') ? -1 : 0),
+    init, paso, puntuacion, casa, dibuja, efectos,
+  };
+})();
+//# sourceURL=zz/canales/western.js
+</script>
+<script>
+/* ZikZak · tele
+   El marco común: el aparato, la mecha de la cuenta atrás, las placas de los jugadores,
+   la nieve del zapeo, la orden en letras gordas y los rótulos. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ, T = ZZ.tinta;
+  const TV = ZZ.tele = {};
+  const W = 720, CUERPO = 982;
+
+  // Reparto de la pantalla del móvil. Todo en unidades lógicas (ancho 720).
+  TV.mide = function (H) {
+    const libre = H - CUERPO;
+    const arriba = ZZ.lim(libre * 0.44, 98, 250);
+    const by = arriba;
+    return {
+      W, H, bx: 14, by, bw: 692, bh: CUERPO,
+      px: 40, py: by + 30, pw: ZZ.PW, ph: ZZ.PH,
+      tiraY: by + 30 + ZZ.PH + 14, tiraH: 78,
+      arriba, abajo: H - by - CUERPO,
+    };
+  };
+
+  // El fondo de fuera va oscuro para que la pantalla de la tele sea lo más luminoso.
+  TV.colorFondo = color => T.mezcla(color, T.TINTA, 0.56);
+  TV.VELO = '#1C1436';
+  TV.velo = function (g, alfa) { g.save(); g.globalAlpha = alfa; g.fillStyle = TV.VELO; g.fillRect(0, 0, ZZ.PW, ZZ.PH); g.restore(); };
+  TV.fondo = function (g, L, color, t) {
+    g.fillStyle = TV.colorFondo(color); g.fillRect(-3000, -200, 6720, L.H + 400);
+    T.rayos(g, 360, L.py + 420, 2600, 12, t * 0.0012, T.mezcla(color, T.TINTA, 0.47));
+    g.save(); g.globalAlpha = 0.5;
+    g.fillStyle = T.trama(g, T.mezcla(color, T.TINTA, 0.72), 15, 3.1);
+    g.fillRect(-3000, -200, 6720, L.H + 400);
+    g.restore();
+  };
+
+  TV.cuerpo = function (g, L, antenas) {
+    const cam = c => T.rr(c, L.bx, L.by, L.bw, L.bh, 62);
+    // antenas (solo cuando arriba no hay placa) y patas
+    for (const s of [-1, 1]) {
+      if (antenas) {
+        g.beginPath(); g.moveTo(360 + s * 36, L.by + 12); g.lineTo(360 + s * 150, L.by - 62); T.linea(g, 11);
+        T.vol(g, c => T.circ(c, 360 + s * 153, L.by - 65, 14), T.AMARILLO, { dx: -3, dy: -4, w: 6 });
+      }
+      T.rr(g, 360 + s * 210 - 52, L.by + L.bh - 10, 104, 44, 14); T.pinta(g, T.TINTA, 0);
+    }
+    T.sombra(g, cam, 0, 16, 1, T.TINTA, 8);
+    T.vol(g, cam, T.PAPEL, { sombra: '#E0D2B2', dx: -8, dy: -12, w: 8 });
+    T.rr(g, L.px - 14, L.py - 14, L.pw + 28, L.ph + 28, 46); T.pinta(g, T.TINTA, 0);
+  };
+
+  TV.pantalla = function (g, L, pinta) {
+    g.save();
+    T.rr(g, L.px, L.py, L.pw, L.ph, 34); g.clip();
+    g.translate(L.px, L.py);
+    pinta(g);
+    g.restore();
+    T.rr(g, L.px, L.py, L.pw, L.ph, 34); T.linea(g, 6);
+  };
+
+  // --- la mecha -----------------------------------------------------------------
+  const MX0 = 66, MX1 = 548;
+  const my = (L, x) => L.tiraY + L.tiraH / 2 + Math.sin(x * 0.045) * 7;
+  function caminoMecha(g, L, a, b) {
+    g.beginPath();
+    g.moveTo(a, my(L, a));
+    for (let x = Math.ceil(a / 10) * 10; x < b; x += 10) g.lineTo(x, my(L, x));
+    g.lineTo(b, my(L, b));
+  }
+  TV.puntaMecha = (L, k) => { const x = MX0 + (MX1 - MX0) * ZZ.lim(k, 0, 1); return [x, my(L, x)]; };
+  TV.mecha = function (g, L, k, t, viva, rota) {
+    const y = L.tiraY + L.tiraH / 2;
+    const xs = MX0 + (MX1 - MX0) * ZZ.lim(k, 0, 1);
+    if (k > 0.01) {
+      g.save(); g.setLineDash([2, 12]);
+      caminoMecha(g, L, MX0, xs); T.linea(g, 6, T.mezcla(T.PAPEL, T.TINTA, 0.42));
+      g.restore();
+    }
+    if (k < 0.995) {
+      T.tubo(g, c => caminoMecha(c, L, xs, MX1 + 24), '#D8A75C', 7, 4);
+      g.save(); g.setLineDash([4, 14]); caminoMecha(g, L, xs, MX1 + 24); T.linea(g, 3, '#8A5A22'); g.restore();
+    }
+    if (rota) {
+      // la bomba ya estalló: queda la marca
+      T.estrella(g, 616, y + 2, 40, 17, 9, 0.3); T.pinta(g, T.TINTA, 0);
+      T.estrella(g, 616, y + 2, 22, 9, 9, 0.6); T.pinta(g, '#4A4658', 0);
+      for (const [dx, dy, r] of [[-26, -30, 12], [6, -40, 15], [30, -26, 11]]) {
+        const s = 1 + Math.sin(t * 0.07 + dx) * 0.1;
+        g.save(); g.globalAlpha = 0.7; T.circ(g, 616 + dx, y + dy - (t % 90) * 0.12, r * s); T.pinta(g, '#D8D2C6', 4); g.restore();
+      }
+      return;
+    }
+    // bomba
+    const tiemb = viva && k > 0.72 ? (Math.random() - 0.5) * 5 * (k - 0.6) * 2.5 : 0;
+    const hincha = viva && k > 0.72 ? 1 + Math.abs(Math.sin(t * 0.5)) * 0.07 * (k - 0.6) * 2.5 : 1;
+    g.save(); g.translate(616 + tiemb, y + 2 + tiemb * 0.6); g.scale(hincha, hincha);
+    T.vol(g, c => T.rr(c, -46, -17, 20, 26, 6), '#8B8798', { dx: -2, dy: -3, w: 5.5 });
+    const cam = c => T.circ(c, 0, 0, 31);
+    T.sombra(g, cam, 0, 6, 0.3);
+    T.vol(g, cam, '#3A3350', { sombra: T.TINTA, dx: -6, dy: -8, w: 6 });
+    g.beginPath(); g.arc(0, 0, 20, Math.PI * 1.08, Math.PI * 1.42); T.linea(g, 5.5, T.PAPEL);
+    g.restore();
+    // chispa
+    if (viva && k < 0.995) {
+      const [x, yy] = [xs, my(L, xs)];
+      T.estrella(g, x, yy, 19 + Math.sin(t * 0.9) * 4, 8, 7, t * 0.21); T.pinta(g, T.AMARILLO, 4.5);
+      T.estrella(g, x, yy, 8, 3.5, 5, -t * 0.3); T.pinta(g, '#FFFFFF', 0);
+    } else if (!viva) {
+      T.circ(g, MX0, my(L, MX0), 6); T.pinta(g, T.TINTA, 0);
+      if (k > 0.02 && k < 0.995) {
+        // se acabó antes de tiempo: la chispa se apaga con un poco de humo
+        const yy = my(L, xs);
+        for (const [dx, dy, r] of [[0, -4, 11], [10, -17, 8], [-6, -24, 6]]) { T.circ(g, xs + dx, yy + dy, r); T.pinta(g, '#D8D2C6', 4); }
+      }
+    }
+  };
+
+  // --- placas de los jugadores ----------------------------------------------------
+  // d: { nombre, etiqueta, aviso, vivo, puntos, pips: [1|-1|0…], rondas, aspecto, expr, t, golpe, color }
+  TV.placa = function (g, x, y, w, h, d) {
+    const cam = c => T.rr(c, x, y, w, h, Math.min(30, h / 2.6));
+    T.sombra(g, cam, 0, 9, 1);
+    cam(g); T.pinta(g, T.PAPEL, 6);
+    const r = h / 2 - 7, cx = x + r + 9, cy = y + h / 2;
+    g.save();
+    T.circ(g, cx, cy, r); g.fillStyle = d.color || T.AZUL; g.fill(); g.clip();
+    g.fillStyle = T.trama(g, T.mezcla(d.color || T.AZUL, T.TINTA, 0.22), 9, 2); g.fillRect(cx - r, cy - r, r * 2, r * 2);
+    ZZ.personaje.busto(g, cx, cy + r * 0.2, r / 70, d.aspecto, d.expr || 'neutro', d.t || 0, { golpe: d.golpe || 0 });
+    g.restore();
+    T.circ(g, cx, cy, r); T.linea(g, 5.5);
+    const tx = cx + r + 16;
+    const tn = Math.min(34, h * 0.36);
+    T.texto(g, d.nombre, tx, y + h * 0.36, tn, { al: 'left', color: T.TINTA, w: 0 });
+    // etiqueta: EN DIRECTO / EN DIFERIDO
+    if (d.etiqueta) {
+      const te = Math.min(19, h * 0.21), an = T.ancho(g, d.etiqueta, te, T.F_UI, 900) + 40;
+      const ey = y + h * 0.72;
+      T.rr(g, tx - 2, ey - te * 0.85, an, te * 1.7, te * 0.85); T.pinta(g, d.vivo ? T.ROJO : T.TINTA, 0);
+      T.circ(g, tx + 13, ey, te * 0.3); g.fillStyle = d.vivo ? '#FFFFFF' : T.AMARILLO;
+      if (!d.vivo || (d.t >> 4) % 2) g.fill();
+      T.texto(g, d.etiqueta, tx + 26, ey + 1, te, { al: 'left', fuente: T.F_UI, peso: 900, w: 0, color: T.PAPEL });
+    }
+    if (d.sub) T.texto(g, d.sub, tx, y + h * 0.72, Math.min(21, h * 0.2), { al: 'left', fuente: T.F_UI, peso: 700, w: 0, color: T.TINTA });
+    // puntos del canal en curso
+    if (d.puntos !== null && d.puntos !== undefined) {
+      const tp = Math.min(44, h * 0.46), ap = Math.max(T.ancho(g, String(d.puntos), tp), tp * 1.3) + 30;
+      T.rr(g, x + w - 14 - ap, y + h * 0.4 - tp * 0.68, ap, tp * 1.36, tp * 0.5); T.pinta(g, T.TINTA, 0);
+      T.texto(g, String(d.puntos), x + w - 14 - ap / 2, y + h * 0.4 + 2, tp, { color: T.AMARILLO, w: 0 });
+    }
+    // canales ganados
+    if (d.pips) {
+      const n = d.pips.length, pr = Math.min(16, h * 0.15), px0 = x + w - 34 - (n - 1) * (pr * 2 + 8), py = y + h * 0.78;
+      for (let i = 0; i < n; i++) {
+        const v = d.pips[i];
+        T.circ(g, px0 + i * (pr * 2 + 8), py, pr);
+        T.pinta(g, v > 0 ? T.AMARILLO : v < 0 ? T.mezcla(T.PAPEL, T.TINTA, 0.5) : T.PAPEL, 4.5);
+        if (v > 0) { T.estrella(g, px0 + i * (pr * 2 + 8), py, pr * 0.62, pr * 0.28, 5); T.pinta(g, T.TINTA, 0); }
+      }
+    }
+  };
+
+  // --- nieve del zapeo --------------------------------------------------------------
+  let ruido = null;
+  function hazRuido() {
+    ruido = [];
+    for (let k = 0; k < 5; k++) {
+      const c = document.createElement('canvas');
+      c.width = 108; c.height = 141;
+      const x = c.getContext('2d');
+      const tonos = ['#2B2536', '#4A4658', '#4A4658', '#6E6A7E', '#6E6A7E', '#8B8798', '#B9B4C4'];
+      for (let i = 0; i < 108; i++) for (let j = 0; j < 141; j++) {
+        x.fillStyle = tonos[(Math.random() * tonos.length) | 0];
+        x.fillRect(i, j, 1, 1);
+      }
+      ruido.push(c);
+    }
+  }
+  TV.nieve = function (g, t, alfa) {
+    if (!ruido) hazRuido();
+    alfa = alfa === undefined ? 1 : alfa;
+    g.save();
+    g.imageSmoothingEnabled = false;
+    g.globalAlpha = alfa;
+    g.drawImage(ruido[t % ruido.length], -((t * 37) % 12), -((t * 53) % 12), ZZ.PW + 12, ZZ.PH + 12);
+    g.fillStyle = T.TINTA;
+    g.globalAlpha = 0.22 * alfa;
+    for (let yy = (t * 3) % 8; yy < ZZ.PH; yy += 8) g.fillRect(0, yy, ZZ.PW, 3);     // líneas de barrido
+    g.globalAlpha = 0.55 * alfa;
+    const y = (t * 31) % (ZZ.PH + 160) - 80;
+    g.fillRect(0, y, ZZ.PW, 54);
+    g.fillRect(0, (y + 410) % ZZ.PH, ZZ.PW, 20);
+    g.restore();
+  };
+
+  // --- número y nombre del canal, arriba a la izquierda -------------------------------
+  TV.mosca = function (g, canal, extra) {
+    const x = 18, y = 18;
+    const an = T.ancho(g, canal.nombre, 25, T.F_UI, 900);
+    T.rr(g, x + 40, y + 8, an + 62, 44, 14); T.pinta(g, T.TINTA, 0);
+    T.texto(g, canal.nombre, x + 84, y + 31, 25, { al: 'left', fuente: T.F_UI, peso: 900, w: 0, color: T.PAPEL });
+    T.rr(g, x, y, 70, 60, 16); T.pinta(g, canal.color, 5.5);
+    T.texto(g, String(canal.num), x + 35, y + 32, 38, { w: 6, color: T.PAPEL, ds: 2 });
+    if (extra) {
+      const a2 = T.ancho(g, extra, 21, T.F_UI, 900);
+      T.rr(g, ZZ.PW - a2 - 118, y + 8, a2 + 30, 40, 13); T.pinta(g, T.TINTA, 0);
+      T.texto(g, extra, ZZ.PW - a2 - 103, y + 29, 21, { al: 'left', fuente: T.F_UI, peso: 900, w: 0, color: T.AMARILLO });
+    }
+  };
+
+  // --- rótulo inferior, como en la tele --------------------------------------------------
+  TV.rotulo = function (g, canal, k) {
+    if (k <= 0) return;
+    const tam = 23, an = T.ancho(g, canal.rotulo, tam, T.F_UI, 700) + 40;
+    const x = -(an + 90) + (an + 90 + 14) * ZZ.e.out3(Math.min(1, k)), y = ZZ.PH - 78;
+    T.rr(g, x + 46, y + 4, an + 20, 46, 8); T.pinta(g, T.TINTA, 0);
+    T.rr(g, x + 40, y - 2, an + 20, 46, 8); T.pinta(g, T.PAPEL, 5);
+    T.texto(g, canal.rotulo, x + 78, y + 22, tam, { al: 'left', fuente: T.F_UI, peso: 700, w: 0, color: T.TINTA });
+    T.rr(g, x, y - 8, 62, 58, 10); T.pinta(g, canal.color, 5);
+    T.texto(g, String(canal.num), x + 31, y + 22, 32, { w: 5, ds: 2 });
+  };
+
+  // --- la orden: un verbo enorme que entra de golpe ------------------------------------------
+  TV.orden = function (g, canal, te, total, t) {
+    const kin = Math.min(1, te / 10), kout = te > total - 10 ? (te - (total - 10)) / 10 : 0;
+    let esc = kin < 1 ? ZZ.mix(3.2, 1, ZZ.e.out3(kin)) : 1 + Math.sin(t * 0.45) * 0.025;
+    esc *= 1 + kout * 0.7;
+    g.save();
+    g.fillStyle = TV.VELO; g.globalAlpha = 0.6 * Math.min(1, kin * 2) * (1 - kout);
+    g.fillRect(0, 0, ZZ.PW, ZZ.PH);
+    g.globalAlpha = 1 - kout;
+    g.translate(ZZ.PW / 2, 392); g.rotate(-0.075); g.scale(esc, esc);
+    T.sombra(g, c => estallidoCamino(c, 282, 13, canal.num), 8, 12, 1);
+    estallidoCamino(g, 282, 13, canal.num); T.pinta(g, canal.color2, 8);
+    let tam = 150;
+    const an = T.ancho(g, canal.orden, tam);
+    if (an > 384) tam *= 384 / an;
+    T.texto(g, canal.orden, 0, 4, tam, { color: T.PAPEL, w: tam * 0.18, ds: tam * 0.07 });
+    g.restore();
+    if (kin >= 1 && kout === 0 && canal.pista) {
+      const a2 = T.ancho(g, canal.pista, 25, T.F_UI, 700) + 44;
+      const ka = Math.min(1, (te - 10) / 7);
+      g.save(); g.globalAlpha = ka; g.translate(ZZ.PW / 2, 640 + (1 - ka) * 20);
+      T.rr(g, -a2 / 2, -27, a2, 54, 27); T.pinta(g, T.TINTA, 0);
+      T.texto(g, canal.pista, 0, 1, 25, { fuente: T.F_UI, peso: 700, w: 0, color: T.PAPEL });
+      g.restore();
+    }
+  };
+  function estallidoCamino(g, R, n, semilla) {
+    const rng = ZZ.azar(semilla);
+    g.beginPath();
+    for (let i = 0; i < n * 2; i++) {
+      const a = 0.1 + i * Math.PI / n;
+      const rr = i % 2 ? R * (0.74 + rng() * 0.06) : R * (0.94 + rng() * 0.12);
+      const px = Math.cos(a) * rr, py = Math.sin(a) * rr * 0.8;
+      i ? g.lineTo(px, py) : g.moveTo(px, py);
+    }
+    g.closePath();
+  }
+
+  // --- botones ----------------------------------------------------------------------
+  TV.boton = function (g, b) {
+    const baja = b.pulsado ? 9 : 0, r = Math.min(28, b.h / 2.3);
+    T.rr(g, b.x, b.y + 11, b.w, b.h, r); T.pinta(g, T.TINTA, 6);
+    const cam = c => T.rr(c, b.x, b.y + baja, b.w, b.h, r);
+    T.vol(g, cam, b.color, { dx: 0, dy: -8, w: 6 });
+    const tam = b.tam || b.h * 0.46;
+    T.texto(g, b.txt, b.x + b.w / 2, b.y + b.h / 2 + baja + 2, tam, { color: b.ctxt || T.PAPEL, w: b.ctxt ? 0 : tam * 0.17, ds: 3, fuente: b.fuente, peso: b.peso });
+  };
+
+  // Sello girado, como un tampón.
+  TV.sello = function (g, txt, x, y, tam, color, k) {
+    const s = k < 1 ? ZZ.mix(2.6, 1, ZZ.e.out3(k)) : 1;
+    g.save(); g.translate(x, y); g.rotate(-0.13); g.scale(s, s); g.globalAlpha = Math.min(1, k * 2);
+    const an = T.ancho(g, txt, tam) + 56;
+    T.rr(g, -an / 2 + 7, -tam * 0.72 + 9, an, tam * 1.44, 18); T.pinta(g, T.TINTA, 6);
+    T.rr(g, -an / 2, -tam * 0.72, an, tam * 1.44, 18); T.pinta(g, color, 7);
+    T.texto(g, txt, 0, 3, tam, { w: tam * 0.16, ds: 3 });
+    g.restore();
+  };
+})();
+//# sourceURL=zz/tele.js
+</script>
+<script>
+/* ZikZak · red
+   Para jugar en directo con otra persona que tenga la página abierta a la vez.
+   Usa la sala de la página (la capacidad `room`) y solo su parte de «presencia»: cada móvil publica
+   su estado entero (a quién reta, por qué canal va, cuántos puntos lleva) y lee el del otro.
+   No hay servidor de juego: cada uno hace su prueba en su móvil, con la misma semilla, y se comparan.
+   Lo que llega del otro móvil se trata como dato sin fiar: se limpia antes de usarlo.
+   En este equipo, sin la plataforma, hay una sala de mentira entre pestañas para poder probar. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ;
+  const R = ZZ.red = { estado: 'sin', sala: null, yo: {} };
+
+  const NOMBRES = ['MANDO', 'ZAPEO', 'ANTENA', 'PALOMITA', 'SOFÁ', 'SINTONÍA', 'PARABÓLICA', 'CORTINILLA', 'TELETEXTO', 'PLATÓ', 'FOCO', 'CLAQUETA'];
+  R.aliasNuevo = () => NOMBRES[(Math.random() * NOMBRES.length) | 0] + ' ' + (10 + ((Math.random() * 90) | 0));
+
+  // --- sala de mentira, solo en este equipo -------------------------------------------
+  function salaLocal() {
+    const yo = 'p' + Math.random().toString(36).slice(2, 10);
+    const canal = new BroadcastChannel('zz-sala');
+    const otros = new Map();
+    let mio = {};
+    const manda = () => canal.postMessage({ peer: yo, presence: mio });
+    canal.onmessage = ev => {
+      const m = ev.data;
+      if (!m || !m.peer || m.peer === yo) return;
+      if (m.adios) otros.delete(m.peer); else otros.set(m.peer, { presence: m.presence || {}, visto: Date.now() });
+    };
+    setInterval(manda, 400);
+    window.addEventListener('pagehide', () => canal.postMessage({ peer: yo, adios: true }));
+    return {
+      presence(patch) {
+        const n = Object.assign({}, mio);
+        for (const k in patch) { if (patch[k] === null) delete n[k]; else n[k] = patch[k]; }
+        mio = n; manda();
+        return Promise.resolve();
+      },
+      peers() {
+        const ahora = Date.now();
+        const l = [{ peer: yo, isMe: true, sameTab: true, kind: 'viewer', guest: false, presence: mio }];
+        for (const [peer, o] of otros) {
+          if (ahora - o.visto > 2500) { otros.delete(peer); continue; }
+          l.push({ peer, isMe: false, sameTab: false, kind: 'viewer', guest: false, presence: o.presence });
+        }
+        return l;
+      },
+      connected() { return true; },
+    };
+  }
+
+  // --- sala por el tiempo real de Supabase: para la página alojada fuera de claude.ai ---------
+  // Un solo canal para todos. Cada móvil repite su estado entero por él; quien calla unos segundos, se da por ido.
+  function salaSupabase(cfg) {
+    const yo = 'p' + Math.random().toString(36).slice(2, 12);
+    const tema = 'realtime:zikzak-sala';
+    const otros = new Map();
+    let mio = {}, ws = null, ref = 0, unido = false, pendiente = false, ultimoEnvio = 0;
+    const manda = (topic, event, payload) => { try { ws.send(JSON.stringify({ topic, event, payload, ref: String(++ref) })); } catch (e) { /* nada */ } };
+    const emite = datos => { ultimoEnvio = Date.now(); manda(tema, 'broadcast', { type: 'broadcast', event: 'e', payload: datos || { peer: yo, presence: mio } }); };
+    function abre() {
+      unido = false;
+      try { ws = new WebSocket(cfg.url.replace(/^http/, 'ws') + '/realtime/v1/websocket?apikey=' + encodeURIComponent(cfg.clave) + '&vsn=1.0.0'); } catch (e) { return; }
+      ws.onopen = () => manda(tema, 'phx_join', { config: { broadcast: { ack: false, self: false }, presence: { key: '' }, postgres_changes: [], private: false } });
+      ws.onmessage = ev => {
+        let m;
+        try { m = JSON.parse(ev.data); } catch (e) { return; }
+        if (m.event === 'phx_reply' && m.topic === tema && m.payload && m.payload.status === 'ok') { if (!unido) { unido = true; emite(); } }
+        else if (m.event === 'phx_reply' && m.topic === tema && m.payload && m.payload.status === 'error') R.error = JSON.stringify(m.payload.response || '').slice(0, 120);
+        else if (m.event === 'broadcast' && m.payload && m.payload.event === 'e') {
+          const d = m.payload.payload;
+          if (!d || typeof d.peer !== 'string' || d.peer === yo) return;
+          const quien = d.peer.slice(0, 24);
+          if (d.adios) otros.delete(quien);
+          else otros.set(quien, { presence: d.presence && typeof d.presence === 'object' ? d.presence : {}, visto: Date.now() });
+        }
+      };
+      ws.onclose = () => { unido = false; setTimeout(abre, 2000); };
+    }
+    abre();
+    setInterval(() => { if (ws && ws.readyState === 1) manda('phoenix', 'heartbeat', {}); }, 25000);
+    setInterval(() => { if (unido && (pendiente || Date.now() - ultimoEnvio > 900)) { pendiente = false; emite(); } }, 150);
+    window.addEventListener('pagehide', () => { if (unido) emite({ peer: yo, adios: true }); });
+    return {
+      presence(patch) {
+        const n = Object.assign({}, mio);
+        for (const k in patch) { if (patch[k] === null) delete n[k]; else n[k] = patch[k]; }
+        mio = n; pendiente = true;
+        return Promise.resolve();
+      },
+      peers() {
+        const ahora = Date.now();
+        const l = [{ peer: yo, isMe: true, sameTab: true, kind: 'viewer', guest: false, presence: mio }];
+        for (const [peer, o] of otros) {
+          if (ahora - o.visto > 3500) { otros.delete(peer); continue; }
+          l.push({ peer, isMe: false, sameTab: false, kind: 'viewer', guest: false, presence: o.presence });
+        }
+        return l;
+      },
+      connected() { return unido; },
+    };
+  }
+
+  // --- conexión ---------------------------------------------------------------------
+  R.inicia = function () {
+    if (R.estado !== 'sin') return;
+    R.estado = 'conectando';
+    const lista = sala => { R.sala = sala; R.estado = 'lista'; ultimo = ''; R.pon({}); };
+    if (!window.claude || !window.claude.use) {
+      const enCasa = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+      const sb = ZZ.CONFIG && ZZ.CONFIG.supabase;
+      // fuera de claude.ai, la sala es el tiempo real del servidor; en este equipo, entre pestañas (salvo que se pida el servidor)
+      if (sb && sb.url && window.WebSocket && (!enCasa || /[?&]red=supabase/.test(location.search))) { R.modo = 'web'; lista(salaSupabase(sb)); }
+      else if (enCasa && window.BroadcastChannel) lista(salaLocal());
+      else R.estado = 'no';
+      return;
+    }
+    window.claude.use('room').then(sala => {
+      if (!sala) { R.estado = 'no'; return; }
+      // si la plataforma no admite a quien mira, lo dice por aquí
+      try { sala.onConnection(() => {}, () => { R.estado = 'no'; R.sala = null; }); } catch (e) { /* nada */ }
+      lista(sala);
+    }, () => { R.estado = 'no'; });
+  };
+
+  // --- mi estado: siempre entero, nunca a trozos ---------------------------------------
+  const CLAVES = ['v', 'alias', 'pinta', 'est', 'a', 'd', 'i', 'f', 'p', 'm', 'r'];
+  let ultimo = '';
+  R.pon = function (patch) {
+    Object.assign(R.yo, patch);
+    if (!R.sala) return;
+    const todo = {};
+    for (const k of CLAVES) todo[k] = R.yo[k] === undefined ? null : R.yo[k];
+    const js = JSON.stringify(todo);
+    if (js === ultimo) return;
+    ultimo = js;
+    try { const pr = R.sala.presence(todo); if (pr && pr.catch) pr.catch(() => {}); } catch (e) { /* nada */ }
+  };
+
+  // --- los demás: se limpia todo lo que llega -----------------------------------------
+  const limpia = s => (typeof s === 'string' ? s : '').toUpperCase().replace(/[^A-ZÁÉÍÓÚÜÑ0-9 ]/g, '').slice(0, 14) || 'ALGUIEN';
+  const ent = (v, a, b, def) => (Number.isInteger(v) && v >= a && v <= b ? v : def);
+  const tiene = (o, k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(o, k);
+  function lee(p) {
+    const q = p.presence || {};
+    if (q.v !== 1) return null;
+    const o = {
+      peer: String(p.peer), otra: !!p.isMe, alias: limpia(q.alias), pinta: ent(q.pinta, 0, 4, 0),
+      est: ['menu', 'sala', 'reto', 'duelo'].indexOf(q.est) >= 0 ? q.est : 'menu',
+      a: typeof q.a === 'string' ? q.a.slice(0, 64) : null,
+      i: ent(q.i, 0, 3, 0), f: ['espera', 'listo', 'juego', 'hecho'].indexOf(q.f) >= 0 ? q.f : 'espera',
+      p: ent(q.p, 0, 1000, 0),
+      m: Array.isArray(q.m) && q.m.length === 2 ? [ent(q.m[0], 0, 1e6, 0), ent(q.m[1], -1, 1, 0)] : [0, 0],
+      r: Array.isArray(q.r) ? q.r.slice(0, 3).map(v => ent(v, 0, 1000, 0)) : [],
+      d: null,
+    };
+    const d = q.d;
+    if (d && Number.isInteger(d.s) && Array.isArray(d.r) && d.r.length === 3 &&
+        d.r.every(x => Array.isArray(x) && tiene(ZZ.canales, x[0]) && ent(x[1], 1, 3, 0))) {
+      o.d = { s: d.s >>> 0, r: d.r.map(x => [x[0], x[1]]) };
+    }
+    return o;
+  }
+  function todos() { try { return R.sala ? R.sala.peers() : []; } catch (e) { return []; } }
+  R.gente = function () {
+    const out = [];
+    for (const p of todos()) {
+      if (p.sameTab || p.kind === 'agent') continue;
+      const o = lee(p);
+      if (o) out.push(o);
+    }
+    return out;
+  };
+  R.miPeer = function () { const yo = todos().find(p => p.sameTab); return yo ? String(yo.peer) : null; };
+  R.de = peer => R.gente().find(o => o.peer === peer) || null;
+  R.conectada = () => { try { return !!(R.sala && R.sala.connected()); } catch (e) { return false; } };
+})();
+//# sourceURL=zz/red.js
+</script>
+<script>
+/* ZikZak · código de reto
+   Una partida entera cabe en un texto corto: la semilla y lo que tocó quien jugó.
+   Quien pega ese texto en su ZikZak juega contra esa partida, repetida paso a paso en su móvil.
+   No hace falta cuenta, sala ni servidor: el texto viaja por donde quiera quien lo manda.
+   Lo que se lee de un código es un dato sin fiar: se comprueba todo y, si algo no cuadra, no vale. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ, C = ZZ.codigo = {};
+  const IDS = ['cocina', 'tiempo', 'western'];      // este orden va dentro de los códigos: no se cambia
+  const TIPOS = ['d', 'm', 'u'];
+  const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+
+  function aTexto(b) {
+    let s = '';
+    for (let i = 0; i < b.length; i += 3) {
+      const n = (b[i] << 16) | ((b[i + 1] || 0) << 8) | (b[i + 2] || 0);
+      s += B64[n >> 18] + B64[(n >> 12) & 63];
+      if (i + 1 < b.length) s += B64[(n >> 6) & 63];
+      if (i + 2 < b.length) s += B64[n & 63];
+    }
+    return s;
+  }
+  function aBytes(s) {
+    const out = [];
+    let n = 0, bits = 0;
+    for (const ch of s) {
+      const v = B64.indexOf(ch);
+      if (v < 0) return null;
+      n = (n << 6) | v; bits += 6;
+      if (bits >= 8) { bits -= 8; out.push((n >> bits) & 255); n &= (1 << bits) - 1; }
+    }
+    return out;
+  }
+  const suma = (b, hasta) => { let s = 7; for (let i = 0; i < hasta; i++) s = (s * 31 + b[i]) & 0xFFFF; return s; };
+
+  // d: { alias, pinta, semilla, rondas: [{ id, nivel, grab }] }
+  C.crea = function (d) {
+    const b = [1, d.pinta & 255];
+    const al = Array.from(new TextEncoder().encode(String(d.alias || '').slice(0, 14)));
+    b.push(al.length);
+    for (const v of al) b.push(v);
+    b.push((d.semilla >>> 24) & 255, (d.semilla >>> 16) & 255, (d.semilla >>> 8) & 255, d.semilla & 255);
+    for (const r of d.rondas) {
+      // en los canales de tocar solo cuenta dónde y cuándo se toca
+      const ev = ZZ.canales[r.id].arrastra ? r.grab : r.grab.filter(e => e[1] === 'd');
+      b.push(IDS.indexOf(r.id), r.nivel, (ev.length >> 8) & 255, ev.length & 255);
+      let ps = 0, px = 0, py = 0;
+      for (const e of ev) {
+        const t = TIPOS.indexOf(e[1]), ds = e[0] - ps, dx = e[2] - px, dy = e[3] - py;
+        if (ds >= 0 && ds < 63 && dx >= -127 && dx <= 127 && dy >= -127 && dy <= 127) b.push((t << 6) | ds, dx + 128, dy + 128);
+        else b.push((t << 6) | 63, e[0] >> 8, e[0] & 255, e[2] >> 8, e[2] & 255, e[3] >> 8, e[3] & 255);
+        ps = e[0]; px = e[2]; py = e[3];
+      }
+    }
+    const s = suma(b, b.length);
+    b.push(s >> 8, s & 255);
+    return 'ZZ1-' + aTexto(b);
+  };
+
+  // Devuelve { alias, pinta, semilla, rondas } o null si el texto no es un código válido.
+  C.lee = function (txt) {
+    const m = /ZZ1-([A-Za-z0-9_-]+)/.exec(String(txt || '').replace(/\s+/g, ''));
+    if (!m) return null;
+    const b = aBytes(m[1]);
+    if (!b || b.length < 24 || b.length > 12000) return null;
+    const fin = b.length - 2;
+    if (suma(b, fin) !== ((b[fin] << 8) | b[fin + 1])) return null;
+    let i = 0;
+    const uno = () => (i < fin ? b[i++] : -1);
+    if (uno() !== 1) return null;
+    const pinta = uno() % 5, n = uno();
+    if (n < 0 || n > 60 || i + n > fin) return null;
+    let alias = '';
+    try { alias = new TextDecoder().decode(new Uint8Array(b.slice(i, i + n))); } catch (e) { alias = ''; }
+    i += n;
+    const semilla = ((uno() << 24) | (uno() << 16) | (uno() << 8) | uno()) >>> 0;
+    const rondas = [];
+    for (let k = 0; k < 3; k++) {
+      const id = IDS[uno()], nivel = uno(), cuantos = (uno() << 8) | uno();
+      if (!id || !ZZ.canales[id] || nivel < 1 || nivel > 3 || cuantos < 0 || cuantos > 1500) return null;
+      const grab = [];
+      let ps = 0, px = 0, py = 0;
+      for (let j = 0; j < cuantos; j++) {
+        const c0 = uno(), t = TIPOS[c0 >> 6];
+        if (c0 < 0 || !t) return null;
+        let s, x, y;
+        if ((c0 & 63) < 63) { s = ps + (c0 & 63); x = px + uno() - 128; y = py + uno() - 128; }
+        else { s = (uno() << 8) | uno(); x = (uno() << 8) | uno(); y = (uno() << 8) | uno(); }
+        if (!(s >= ps && s <= ZZ.PASOS && x >= 0 && x <= ZZ.PW && y >= 0 && y <= ZZ.PH)) return null;
+        grab.push([s, t, x, y]);
+        ps = s; px = x; py = y;
+      }
+      rondas.push({ id, nivel, semilla: (semilla + 7919 * (k + 1)) >>> 0, grab });
+    }
+    if (i !== fin) return null;
+    return { alias, pinta, semilla, rondas };
+  };
+})();
+//# sourceURL=zz/codigo.js
+</script>
+<script>
+/* ZikZak · la aplicación
+   Lienzo, toques, bucle a paso fijo y las pantallas: título, búsqueda de rival, cara a cara, zapeo,
+   rótulo y orden, juego, marcador del canal y resultado del duelo. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ, T = ZZ.tinta, TV = ZZ.tele, P = ZZ.personaje, son = ZZ.son;
+  const lienzo = document.getElementById('zz');
+  const g = lienzo.getContext('2d');
+  const PW = ZZ.PW, PH = ZZ.PH;
+
+  // --- lo que se guarda en este móvil ------------------------------------------------
+  const guarda = {
+    lee(k, def) { try { const v = localStorage.getItem('zz1_' + k); return v ? JSON.parse(v) : def; } catch (e) { return def; } },
+    pon(k, v) { try { localStorage.setItem('zz1_' + k, JSON.stringify(v)); } catch (e) { /* sin sitio: se sigue sin guardar */ } },
+  };
+  const perfil = Object.assign({ pinta: 0, cuota: 0.45, duelos: 0, ganados: 0, mudo: false, mejores: {}, vistos: {} }, guarda.lee('perfil', {}));
+  const guardaPerfil = () => guarda.pon('perfil', perfil);
+  son.pon(perfil.mudo);
+  // lo que los demás ven de mí en la sala: un nombre de la casa (sin datos personales) y mi pinta
+  const red = ZZ.red;
+  if (!perfil.alias) { perfil.alias = red.aliasNuevo(); guardaPerfil(); }
+  const publica = patch => red.pon(Object.assign({ v: 1, alias: perfil.alias, pinta: perfil.pinta }, patch || {}));
+  const aliasLimpio = t => String(t || '').toUpperCase().replace(/[^A-ZÁÉÍÓÚÜÑ0-9 ]/g, '').slice(0, 14) || 'ALGUIEN';
+  // El recuadro de texto de los códigos de reto: el único trozo de la página que no es lienzo,
+  // porque copiar y pegar solo funciona de verdad en un campo de texto.
+  const cajaCod = document.createElement('textarea');
+  cajaCod.id = 'zzcod'; cajaCod.hidden = true; cajaCod.spellcheck = false;
+  cajaCod.setAttribute('aria-label', 'Código del reto');
+  cajaCod.setAttribute('autocapitalize', 'off'); cajaCod.setAttribute('autocomplete', 'off');
+  lienzo.parentNode.appendChild(cajaCod);
+  let cssCaja = '';
+  function colocaCaja() {
+    const ver = A.est === 'codListo' || A.est === 'codPega';
+    if (cajaCod.hidden === ver) cajaCod.hidden = !ver;
+    if (!ver || !lienzo.width) return;
+    const k = (lienzo.clientWidth || lienzo.width) / lienzo.width, L = A.L;
+    const css = 'left:' + (lienzo.offsetLeft + (A.ox + (L.px + 44) * A.s) * k).toFixed(1) + 'px;top:' + (lienzo.offsetTop + (L.py + 236) * A.s * k).toFixed(1) +
+      'px;width:' + ((PW - 88) * A.s * k).toFixed(1) + 'px;height:' + (150 * A.s * k).toFixed(1) + 'px;font-size:' + Math.max(11, 19 * A.s * k).toFixed(1) + 'px';
+    if (css !== cssCaja) { cssCaja = css; cajaCod.style.cssText = css; }
+  }
+
+  const A = ZZ.app = {
+    est: 'carga', te: 0, t: 0,
+    L: TV.mide(1180), s: 1, ox: 0,
+    botones: [], pulsado: null, cola: [], dedo: null,
+    ch: new T.Chispas(),
+    color: T.VIOLETA, temblor: 0,
+    duelo: null, ronda: null, final: null,
+    caras: { yo: { expr: 'neutro', hasta: 0, golpe: 0 }, rival: { expr: 'neutro', hasta: 0, golpe: 0 } },
+    perfil,
+  };
+  const EST = {};
+  ZZ.depura = { pausa: false };
+  const miPinta = () => { const d = A.duelo; return P.PINTAS[(d && d.tipo === 'turnos' ? d.pintas[d.fase - 1] : perfil.pinta) % P.PINTAS.length]; };
+  const yoNombre = () => (A.duelo && A.duelo.yoNombre) || 'TÚ';
+  const coma = (v, d = 1) => v.toFixed(d).replace('.', ',');
+  const cuotaTxt = c => coma(c * 40) + ' %';
+  const UI = { fuente: T.F_UI, peso: 900, w: 0 };
+  const ui = (color, extra) => Object.assign({}, UI, { color }, extra || {});
+
+  function ir(est) {
+    A.est = est; A.te = 0; A.pulsado = null;
+    if (EST[est].entra) EST[est].entra();
+  }
+
+  // --- medidas ---------------------------------------------------------------------------
+  function mide() {
+    const fijo = ZZ.depura.tam;      // solo en las capturas de revisión: tamaño fijo
+    const dpr = fijo ? fijo[2] : Math.min(window.devicePixelRatio || 1, 2);
+    const cw = fijo ? fijo[0] : (lienzo.clientWidth || window.innerWidth), ch = fijo ? fijo[1] : (lienzo.clientHeight || window.innerHeight);
+    if (!cw || !ch) return;
+    const w = Math.round(cw * dpr), h = Math.round(ch * dpr);
+    if (lienzo.width !== w) lienzo.width = w;
+    if (lienzo.height !== h) lienzo.height = h;
+    let s = cw / 720, H = ch / s;
+    if (H < 1180) { s = ch / 1180; H = 1180; }
+    A.s = s * dpr;
+    A.ox = (cw - 720 * s) / 2 * dpr;
+    A.L = TV.mide(H);
+  }
+
+  // --- toques ----------------------------------------------------------------------------
+  function pos(ev) {
+    const r = lienzo.getBoundingClientRect();
+    const kx = lienzo.width / r.width, ky = lienzo.height / r.height;
+    return { x: ((ev.clientX - r.left) * kx - A.ox) / A.s, y: ((ev.clientY - r.top) * ky) / A.s };
+  }
+  const dentro = (b, p) => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
+  function aJuego(p, tipo) {
+    const L = A.L;
+    return { t: tipo, x: Math.round(ZZ.lim(p.x - L.px, 0, PW)), y: Math.round(ZZ.lim(p.y - L.py, 0, PH)) };
+  }
+  lienzo.addEventListener('pointerdown', function (ev) {
+    ev.preventDefault();
+    son.inicia();
+    const p = pos(ev);
+    for (let i = A.botones.length - 1; i >= 0; i--) {
+      if (dentro(A.botones[i], p)) { A.pulsado = A.botones[i].id; A.punteroBoton = ev.pointerId; return; }
+    }
+    if (A.est === 'juego' && A.dedo === null) {
+      const L = A.L, r = A.ronda;
+      const enPantalla = p.x >= L.px && p.x <= L.px + PW && p.y >= L.py && p.y <= L.py + PH;
+      if (enPantalla || r.canal.todaLaPantalla) {
+        A.dedo = ev.pointerId;
+        try { lienzo.setPointerCapture(ev.pointerId); } catch (e) { /* nada */ }
+        A.cola.push(aJuego(p, 'd'));
+      }
+      return;
+    }
+    if (EST[A.est].toca) EST[A.est].toca(p);
+  });
+  lienzo.addEventListener('pointermove', function (ev) {
+    if (A.dedo !== ev.pointerId || A.est !== 'juego') return;
+    const e = aJuego(pos(ev), 'm'), u = A.cola[A.cola.length - 1];
+    if (u && u.t === 'm') A.cola[A.cola.length - 1] = e; else A.cola.push(e);
+  });
+  function suelta(ev) {
+    if (A.pulsado && A.punteroBoton === ev.pointerId) {
+      const p = pos(ev), b = A.botones.find(x => x.id === A.pulsado);
+      A.pulsado = null;
+      if (b && dentro(b, p) && ev.type === 'pointerup') { son.boton(); b.accion(); }
+      return;
+    }
+    if (A.dedo === ev.pointerId) {
+      A.dedo = null;
+      if (A.est === 'juego') A.cola.push(aJuego(pos(ev), 'u'));
+    }
+  }
+  lienzo.addEventListener('pointerup', suelta);
+  lienzo.addEventListener('pointercancel', suelta);
+  lienzo.addEventListener('contextmenu', ev => ev.preventDefault());
+
+  function boton(gg, id, x, y, w, h, txt, color, accion, o) {
+    o = o || {};
+    TV.boton(gg, { x, y, w, h, txt, color, tam: o.tam, ctxt: o.ctxt, fuente: o.fuente, peso: o.peso, pulsado: A.pulsado === id });
+    const dx = o.fuera ? 0 : A.L.px, dy = o.fuera ? 0 : A.L.py;
+    A.botones.push({ id, x: x + dx, y: y + dy, w, h: h + 11, accion });
+  }
+  function zona(id, x, y, w, h, accion) { A.botones.push({ id, x, y, w, h, accion }); }
+
+  // --- ánimo de las caras de las placas -------------------------------------------------------
+  function animo(quien, signo) {
+    const c = A.caras[quien];
+    c.expr = signo > 0 ? 'contento' : 'enfadado'; c.hasta = A.t + 46; c.golpe = 1;
+    const d = A.duelo;
+    if (quien === 'yo' && d && d.tipo === 'vivo' && A.est === 'juego') { d.mio = (d.mio || 0) + 1; publica({ m: [d.mio, signo > 0 ? 1 : -1] }); }
+  }
+  const exprDe = (quien, base) => (A.t < A.caras[quien].hasta ? A.caras[quien].expr : base);
+  function animos(quien, ev, canal) {
+    if (!canal.animo) return;
+    for (const x of ev) { const s = canal.animo(x); if (s) animo(quien, s); }
+  }
+
+  // --- duelos y rondas -----------------------------------------------------------------------------
+  function creaDuelo(tipo) {
+    const ids = Object.keys(ZZ.canales);
+    let d;
+    const u = tipo === 'yo' ? guarda.lee('ultimo', null) : null;
+    if (u) {
+      d = {
+        tipo: 'yo', semilla: u.semilla,
+        rondas: u.rondas.map(r => ({ id: r.id, nivel: r.nivel, semilla: r.semilla, grab: r.grab })),
+        rival: { nombre: 'TÚ, ANTES', etiqueta: 'EN DIFERIDO', sub: 'Tu duelo anterior, grabado', aspecto: P.PINTAS[(u.pinta || 0) % P.PINTAS.length], color: T.MENTA },
+      };
+    } else {
+      const semilla = (Math.random() * 4294967296) >>> 0, rng = ZZ.azar(semilla);
+      const c = perfil.cuota;
+      const niveles = c < 0.38 ? [1, 1, 2] : c < 0.6 ? [1, 2, 2] : c < 0.8 ? [2, 2, 3] : [2, 3, 3];
+      const bar = ids.slice();
+      for (let i = bar.length - 1; i > 0; i--) { const j = rng.entero(0, i); const x = bar[i]; bar[i] = bar[j]; bar[j] = x; }
+      const rondas = [0, 1, 2].map(i => {
+        const id = bar[i % bar.length], sem = (semilla + 7919 * (i + 1)) >>> 0, nivel = niveles[i];
+        const dest = ZZ.lim(c + rng.campana() * 0.07, 0.08, 0.97);
+        return { id, nivel, semilla: sem, grab: ZZ.grabaCasa(ZZ.canales[id], sem, nivel, dest).grab };
+      });
+      d = { tipo: 'casa', semilla, rondas, rival: { nombre: 'AJUSTE', etiqueta: 'RIVAL DE LA CASA', sub: 'Lo mueve un programa: no es una persona', aspecto: P.AJUSTE, color: T.VIOLETA } };
+    }
+    d.i = 0; d.res = []; d.pts = [];
+    return d;
+  }
+  function creaEnsayo(id, nivel) {
+    return { tipo: 'ensayo', rondas: [{ id, nivel, semilla: (Math.random() * 4294967296) >>> 0, grab: null }], i: 0, res: [], pts: [], rival: null };
+  }
+  // Tres canales barajados para un duelo entre dos personas.
+  function defVivo() {
+    const s0 = (Math.random() * 4294967296) >>> 0, rng = ZZ.azar(s0), bar = Object.keys(ZZ.canales);
+    for (let i = bar.length - 1; i > 0; i--) { const j = rng.entero(0, i); const x = bar[i]; bar[i] = bar[j]; bar[j] = x; }
+    return { s: s0, r: [0, 1, 2].map(i => [bar[i % bar.length], [1, 2, 2][i]]) };
+  }
+  const rondasDe = def => def.r.map((x, i) => ({ id: x[0], nivel: x[1], semilla: (def.s + 7919 * (i + 1)) >>> 0, grab: null }));
+  // Por turnos, en el mismo móvil: primero juega una persona y luego la otra, contra su grabación.
+  function creaTurnos() {
+    const def = defVivo();
+    return { tipo: 'turnos', fase: 1, semilla: def.s, yoNombre: 'JUGADOR 1', pintas: [perfil.pinta, (perfil.pinta + 1) % P.PINTAS.length],
+      rondas: rondasDe(def), rival: null, i: 0, res: [], pts: [] };
+  }
+  // En directo: cada uno en su móvil, con los mismos retos. `o` es lo que publica el otro.
+  function creaVivo(def, o) {
+    return { tipo: 'vivo', semilla: def.s, rondas: rondasDe(def), peer: o.peer, rv: o, visto: A.t, mSeq: o.m[0], misPts: [], i: 0, res: [], pts: [],
+      rival: { nombre: o.alias, etiqueta: 'EN DIRECTO', vivo: true, sub: 'Juega ahora mismo: desde su móvil', aspecto: P.PINTAS[o.pinta], color: T.ROJO } };
+  }
+  // A distancia: quien crea el reto juega solo y se lleva un código; quien lo pega juega contra esa partida.
+  function creaReto() { const def = defVivo(); return { tipo: 'reto', semilla: def.s, rondas: rondasDe(def), rival: null, i: 0, res: [], pts: [] }; }
+  function creaRetado(c) {
+    return { tipo: 'retado', semilla: c.semilla, rondas: c.rondas.map(r => ({ id: r.id, nivel: r.nivel, semilla: r.semilla, grab: r.grab })), i: 0, res: [], pts: [],
+      rival: { nombre: aliasLimpio(c.alias), etiqueta: 'EN DIFERIDO', sub: 'Su reto: grabado en su móvil', aspecto: P.PINTAS[c.pinta % P.PINTAS.length], color: T.MENTA } };
+  }
+  const F_ROTULO = 34;      // lo que dura el rótulo del programa antes de la orden
+  function empiezaRonda() {
+    const d = A.duelo, def = d.rondas[d.i], canal = ZZ.canales[def.id];
+    A.ronda = {
+      canal, nivel: def.nivel, semilla: def.semilla,
+      yo: new ZZ.Partida(canal, def.semilla, def.nivel),
+      rival: def.grab ? new ZZ.Repeticion(canal, def.semilla, def.nivel, def.grab) : null,
+      vis: { t: 0, n: 0, esc: A.s, ch: new T.Chispas(), temblor: 0, parada: 0 },
+      pYo: 0, pRival: 0, gana: 0, agotado: false,
+      fOrden: (perfil.vistos[def.id] || 0) < 2 ? 132 : 66,   // las dos primeras veces, más tiempo para leer la pista
+    };
+    perfil.vistos[def.id] = (perfil.vistos[def.id] || 0) + 1;
+    guardaPerfil();
+    A.cola.length = 0; A.dedo = null;
+    if (d.tipo === 'vivo') { d.pEnv = 0; publica({ est: 'duelo', a: d.peer, i: d.i, f: 'juego', p: 0 }); }
+    ir('zap');
+  }
+  function vivo() {
+    const r = A.ronda, v = r.vis;
+    v.t++;
+    r.canal.efectos(r.yo.e, v, [], null);
+    v.ch.paso();
+    if (v.temblor > 0) v.temblor--;
+  }
+  function escena(gg, sinMosca) {
+    const r = A.ronda, v = r.vis;
+    v.esc = A.s;
+    gg.save();
+    if (v.temblor > 0) gg.translate((Math.random() - 0.5) * v.temblor * 1.5, (Math.random() - 0.5) * v.temblor * 1.5);
+    r.canal.dibuja(gg, r.yo.e, v);
+    gg.restore();
+    if (!sinMosca) TV.mosca(gg, r.canal);
+    // el rótulo del programa sale solo, antes de la orden, y se va: durante el juego no tapa nada
+    if (A.est === 'orden' && A.te < F_ROTULO) TV.rotulo(gg, r.canal, Math.min(1, A.te / 8, (F_ROTULO - A.te) / 7));
+  }
+  function finRonda() {
+    const r = A.ronda;
+    son.calla();
+    r.pYo = r.yo.puntos();
+    r.agotado = r.yo.n >= ZZ.PASOS;
+    if (r.rival) {
+      r.pRival = r.rival.hastaElFinal();
+      r.gana = r.pYo > r.pRival ? 1 : r.pYo < r.pRival ? -1 : 0;
+    }
+    if (A.duelo.tipo === 'vivo') { const d = A.duelo; d.misPts[d.i] = r.pYo; publica({ f: 'hecho', p: r.pYo, r: d.misPts.slice() }); }
+    ir('remate');
+  }
+  function sigue() {
+    const d = A.duelo;
+    d.rondas[d.i].mia = A.ronda.yo.grab;
+    if (!d.rival) d.pts[d.i] = [A.ronda.pYo, 0];
+    d.i++;
+    if (d.i < d.rondas.length) {
+      if (d.tipo === 'vivo') { publica({ est: 'duelo', a: d.peer, i: d.i, f: 'listo', p: 0 }); ir('listos'); } else empiezaRonda();
+      return;
+    }
+    if (d.tipo === 'turnos' && d.fase === 1) {
+      // ha jugado la primera persona: su turno queda grabado y le toca a la segunda
+      d.fase = 2; d.i = 0; d.res = []; d.pts = [];
+      d.rondas.forEach(r => { r.grab = r.mia; r.mia = null; });
+      d.rival = { nombre: 'JUGADOR 1', etiqueta: 'EN DIFERIDO', sub: 'Su turno: grabado hace un momento', aspecto: P.PINTAS[d.pintas[0] % P.PINTAS.length], color: T.MENTA };
+      d.yoNombre = 'JUGADOR 2';
+      ir('pase');
+      return;
+    }
+    if (d.tipo === 'reto') {
+      // mi partida, convertida en un texto que se puede mandar
+      A.codigo = ZZ.codigo.crea({ alias: perfil.alias, pinta: perfil.pinta, semilla: d.semilla, rondas: d.rondas.map(r => ({ id: r.id, nivel: r.nivel, grab: r.mia })) });
+      A.misPts = d.pts.map(x => x[0]);
+      ir('codListo');
+      return;
+    }
+    const mias = d.res.filter(v => v > 0).length, suyas = d.res.filter(v => v < 0).length;
+    const tot = d.pts.reduce((a, p) => [a[0] + p[0], a[1] + p[1]], [0, 0]);
+    const gana = mias !== suyas ? Math.sign(mias - suyas) : Math.sign(tot[0] - tot[1]);
+    const antes = perfil.cuota;
+    if (d.tipo === 'casa' || d.tipo === 'yo') {
+      perfil.duelos++;
+      if (gana > 0) perfil.ganados++;
+      if (d.tipo === 'casa') perfil.cuota = ZZ.lim(perfil.cuota + gana * 0.06, 0.1, 0.95);
+      guardaPerfil();
+      guarda.pon('ultimo', { semilla: d.semilla, pinta: perfil.pinta, rondas: d.rondas.map(r => ({ id: r.id, nivel: r.nivel, semilla: r.semilla, grab: r.mia })) });
+    }
+    A.final = { gana, mias, suyas, tot, antes, ahora: perfil.cuota };
+    ir('final');
+  }
+
+  // --- en directo: seguir lo que publica el otro móvil -------------------------------------------
+  function sigueRival() {
+    const d = A.duelo;
+    if (!d || d.tipo !== 'vivo' || A.est === 'final') return;
+    const o = red.de(d.peer);
+    if (o && (o.est === 'duelo' || o.est === 'reto') && o.a === red.miPeer()) {
+      d.rv = o; d.visto = A.t;
+      if (o.m[0] !== d.mSeq) { d.mSeq = o.m[0]; if (o.m[1] && A.est === 'juego') animo('rival', o.m[1]); }
+    } else if (A.t - d.visto > 300) {
+      // cuatro o cinco segundos sin noticias: se ha ido, y quien se va pierde
+      for (let i = 0; i < d.rondas.length; i++) if (d.res[i] === undefined) { d.res[i] = 1; d.pts[i] = [d.misPts[i] || 0, 0]; }
+      const tot = d.pts.reduce((a, p) => [a[0] + p[0], a[1] + p[1]], [0, 0]);
+      son.calla();
+      A.final = { gana: 1, mias: d.res.filter(v => v > 0).length, suyas: d.res.filter(v => v < 0).length, tot, antes: perfil.cuota, ahora: perfil.cuota, ido: true };
+      ir('final');
+    }
+  }
+
+  // Texto en varias líneas.
+  function parrafo(gg, txt, x, y, ancho, tam, color, centrado) {
+    gg.save(); gg.font = '700 ' + tam + 'px ' + T.F_UI;
+    const lineas = [];
+    let ln = '';
+    for (const pal of txt.split(' ')) {
+      const t = ln ? ln + ' ' + pal : pal;
+      if (ln && gg.measureText(t).width > ancho) { lineas.push(ln); ln = pal; } else ln = t;
+    }
+    if (ln) lineas.push(ln);
+    gg.restore();
+    lineas.forEach((l, i) => T.texto(gg, l, x, y + i * tam * 1.32, tam, ui(color, { peso: 700, al: centrado ? 'center' : 'left' })));
+  }
+
+  // Fondo de las pantallas que no son un canal: color oscuro, rayos y trama.
+  function fondoPantalla(gg, color, cx, cy) {
+    gg.fillStyle = T.mezcla(color, T.TINTA, 0.42); gg.fillRect(0, 0, PW, PH);
+    T.rayos(gg, cx === undefined ? 320 : cx, cy === undefined ? 300 : cy, 1100, 12, A.t * 0.003, T.mezcla(color, T.TINTA, 0.28));
+    gg.save(); gg.globalAlpha = 0.6;
+    gg.fillStyle = T.trama(gg, T.mezcla(color, T.TINTA, 0.6), 14, 3); gg.fillRect(0, 0, PW, PH);
+    gg.restore();
+  }
+
+  // =====================================================================================
+  // PANTALLAS
+  // =====================================================================================
+
+  EST.carga = {
+    pinta(gg) { fondoPantalla(gg, T.VIOLETA); },
+  };
+
+  // --- hoja de muestra: solo para revisar los personajes --------------------------------------
+  EST.muestra = {
+    pinta(gg) {
+      gg.fillStyle = A.muestraFondo || T.PAPEL; gg.fillRect(0, 0, PW, PH);
+      const ex = ['neutro', 'contento', 'euforico', 'enfadado', 'susto', 'triste', 'tension'];
+      const todos = P.PINTAS.concat([P.AJUSTE]);
+      if (A.muestraModo === 'cuerpos') {
+        const poses = ['quieto', 'listo', 'victoria', 'derrota', 'saludo', 'reto'];
+        todos.forEach((a, i) => P.entero(gg, 110 + (i % 3) * 210, 400 + Math.floor(i / 3) * 410, 1.25, a, ex[i % ex.length], 40, poses[(i + (A.muestraGiro || 0)) % poses.length]));
+        return;
+      }
+      todos.forEach((a, i) => ex.forEach((e, j) => P.busto(gg, 52 + j * 89, 78 + i * 138, 0.62, a, e, 40)));
+    },
+  };
+
+  // --- título -------------------------------------------------------------------------------
+  function logo(gg, cx, cy, esc, t) {
+    gg.save();
+    gg.translate(cx, cy); gg.scale(esc, esc); gg.rotate(-0.07);
+    // un estallido rojo detrás de las letras, como el de las órdenes
+    gg.save(); gg.translate(10, 14); T.estallido(gg, 0, 8, 306, 12, 0.26, T.TINTA, 10, 11); gg.restore();
+    T.estallido(gg, 0, 8, 306, 12, 0.26, T.ROJO, 10, 11);
+    const bota = Math.sin(t * 0.07) * 4;
+    T.texto(gg, 'ZIK', -78, -90 + bota, 196, { color: T.AMARILLO, w: 30, ds: 12 });
+    T.texto(gg, 'ZAK', 62, 100 - bota, 196, { color: T.PAPEL, w: 30, ds: 12 });
+    gg.restore();
+  }
+  function cambiaPinta() { perfil.pinta = (perfil.pinta + 1) % P.PINTAS.length; guardaPerfil(); son.cara(); animo('yo', 1); publica({}); }
+  function miPlaca(gg, L, conBoton) {
+    const m = medidasPlacas(L);
+    TV.placa(gg, 30, m.yB, 660, m.hB, { nombre: 'TÚ', sub: 'Cuota de pantalla: ' + cuotaTxt(perfil.cuota), aspecto: miPinta(), expr: exprDe('yo', 'neutro'), t: A.t, golpe: A.caras.yo.golpe, color: T.AZUL, puntos: null });
+    if (conBoton) {
+      zona('pinta0', 30, m.yB, 300, m.hB, cambiaPinta);
+      const bh = Math.min(58, m.hB * 0.5);
+      boton(gg, 'pinta', 452, m.yB + (m.hB - bh) / 2 - 5, 222, bh, 'CAMBIAR PINTA', T.AMARILLO, cambiaPinta, { tam: 21, fuera: true, ctxt: T.TINTA, fuente: T.F_UI, peso: 900 });
+    }
+  }
+  EST.titulo = {
+    entra() { A.color = T.VIOLETA; A.duelo = null; A.ronda = null; publica({ est: 'menu', a: null, d: null, i: 0, f: 'espera', p: 0, r: [], m: [0, 0] }); },
+    pinta(gg) {
+      fondoPantalla(gg, T.VIOLETA, 320, 250);
+      logo(gg, 316, 226, 0.82, A.t);
+      P.busto(gg, 606, 432 + Math.sin(A.t * 0.05) * 4, 0.88, P.AJUSTE, 'contento', A.t, { ladeo: -0.3 });
+      gg.save(); gg.translate(320, 438); gg.rotate(-0.03);
+      T.rr(gg, -228, -22, 470, 60, 12); T.pinta(gg, T.TINTA, 0);
+      T.rr(gg, -236, -30, 472, 60, 12); T.pinta(gg, T.PAPEL, 6);
+      T.texto(gg, 'DUELOS DE 5 SEGUNDOS', 0, 2, 31, ui(T.TINTA));
+      gg.restore();
+      boton(gg, 'duelo', 100, 494, 440, 100, '¡A ZAPEAR!', T.ROJO, () => { A.duelo = creaDuelo('casa'); ir('buscando'); }, { tam: 52 });
+      // si alguien me reta desde su móvil, el botón lo avisa
+      const yoPeer = red.miPeer(), meRetan = !!yoPeer && red.gente().some(o => o.est === 'reto' && o.a === yoPeer);
+      boton(gg, 'amigo', 100, 618, 440, 82, meRetan ? '¡TE RETAN!' : 'CON UN AMIGO', meRetan ? T.AMARILLO : T.VIOLETA, () => ir(meRetan ? 'sala' : 'amigo'), { tam: 36, ctxt: meRetan ? T.TINTA : undefined });
+      const hay = !!guarda.lee('ultimo', null);
+      if (hay) {
+        boton(gg, 'ensayo', 100, 724, 208, 72, 'ENSAYO', T.AZUL, () => ir('ensayo'), { tam: 30 });
+        boton(gg, 'contrati', 332, 724, 208, 72, 'CONTRA TI', T.MENTA, () => { A.duelo = creaDuelo('yo'); ir('buscando'); }, { tam: 24 });
+      } else {
+        boton(gg, 'ensayo', 100, 724, 440, 72, 'ENSAYO', T.AZUL, () => ir('ensayo'), { tam: 32 });
+      }
+    },
+    fuera(gg, L) {
+      const yb = Math.max(8, L.arriba - 150);
+      T.texto(gg, 'PRUEBA DE ASPECTO · ' + ZZ.VERSION, 30, yb + 34, 21, ui(T.PAPEL, { al: 'left' }));
+      boton(gg, 'son', 610, yb, 80, 62, perfil.mudo ? 'NO' : 'SÍ', perfil.mudo ? T.mezcla(T.PAPEL, T.TINTA, 0.45) : T.AMARILLO,
+        () => { perfil.mudo = !perfil.mudo; son.pon(perfil.mudo); guardaPerfil(); }, { tam: 25, fuera: true, ctxt: T.TINTA });
+      T.texto(gg, 'SONIDO', 596, yb + 34, 21, ui(T.PAPEL, { al: 'right' }));
+      miPlaca(gg, L, true);
+    },
+  };
+
+  // --- ensayo ------------------------------------------------------------------------------------
+  EST.ensayo = {
+    entra() { A.color = T.AZUL; A.duelo = null; A.ronda = null; },
+    pinta(gg) {
+      fondoPantalla(gg, T.AZUL, 320, 90);
+      T.texto(gg, 'ENSAYO', 320, 86, 84, { color: T.AMARILLO, w: 15 });
+      T.texto(gg, 'Sin rival y sin apuesta. Elige canal y nivel.', 320, 158, 24, ui(T.PAPEL, { peso: 700 }));
+      const ids = Object.keys(ZZ.canales).sort((a, b) => ZZ.canales[a].num - ZZ.canales[b].num);
+      ids.forEach((id, i) => {
+        const c = ZZ.canales[id], y = 200 + i * 172;
+        T.rr(gg, 32, y + 10, 584, 150, 26); T.pinta(gg, T.TINTA, 6);
+        T.rr(gg, 28, y, 584, 150, 26); T.pinta(gg, T.PAPEL, 6);
+        T.rr(gg, 44, y + 18, 84, 84, 20); T.pinta(gg, c.color, 6);
+        T.texto(gg, String(c.num), 86, y + 62, 56, { w: 8, ds: 3 });
+        T.texto(gg, c.nombre, 146, y + 44, 30, { al: 'left', color: T.TINTA, w: 0 });
+        T.texto(gg, c.orden, 146, y + 86, 26, ui(T.mezcla(c.color, T.TINTA, 0.25), { al: 'left' }));
+        const mej = Math.max(0, ...[1, 2, 3].map(n => perfil.mejores[id + n] || 0));
+        T.texto(gg, mej ? 'MEJOR MARCA: ' + mej : 'SIN MARCA TODAVÍA', 596, y + 128, 20, ui(mej ? T.TINTA : T.mezcla(T.PAPEL, T.TINTA, 0.5), { al: 'right' }));
+        [1, 2, 3].forEach(n => {
+          boton(gg, 'en' + id + n, 356 + (n - 1) * 84, y + 22, 70, 70, String(n), [T.MENTA, T.AMARILLO, T.ROJO][n - 1],
+            () => { A.duelo = creaEnsayo(id, n); empiezaRonda(); }, { tam: 40 });
+        });
+      });
+      boton(gg, 'volver', 210, 732, 220, 76, 'VOLVER', T.TINTA, () => ir('titulo'), { tam: 32 });
+    },
+    fuera(gg, L) { miPlaca(gg, L, false); },
+  };
+
+  // --- búsqueda de rival y cara a cara ---------------------------------------------------------------
+  const F_NADIE = 66, F_VS = 118, F_FIN = 270;
+  EST.buscando = {
+    entra() { A.color = T.VIOLETA; if (A.duelo.tipo === 'yo' || A.duelo.tipo === 'vivo' || A.duelo.tipo === 'retado') A.te = F_VS; },
+    tic() {
+      if (A.te === F_NADIE) son.fallo();
+      if (A.te === F_VS) { son.orden(); A.temblor = 8; }
+      const d = A.duelo;
+      if (d.tipo === 'vivo') {
+        // en directo se empieza cuando los dos están listos
+        if (A.te === F_VS + 60) publica({ f: 'listo' });
+        if (A.te > F_VS + 60 && d.rv && d.rv.f !== 'espera') empiezaRonda();
+      } else if (A.te >= F_FIN) empiezaRonda();
+    },
+    toca() {
+      if (A.te < F_VS) A.te = F_VS - 1;
+      else if (A.duelo.tipo === 'vivo') A.te = Math.max(A.te, F_VS + 59);
+      else if (A.te > F_VS + 30) A.te = F_FIN;
+    },
+    pinta(gg) {
+      const d = A.duelo;
+      if (A.te < F_VS) {
+        fondoPantalla(gg, T.VIOLETA, 320, 350);
+        const cx = 320, cy = 350;
+        for (let i = 0; i < 3; i++) {
+          const k = ((A.t * 0.012) + i / 3) % 1;
+          T.circ(gg, cx, cy, 150 + k * 170); T.linea(gg, 11 - k * 9, T.AMARILLO);
+        }
+        T.circ(gg, cx, cy + 10, 146); T.pinta(gg, T.TINTA, 0);
+        gg.save(); T.circ(gg, cx, cy, 146); gg.fillStyle = T.AZUL; gg.fill(); gg.clip();
+        gg.fillStyle = T.trama(gg, T.mezcla(T.AZUL, T.TINTA, 0.25), 12, 2.6); gg.fillRect(cx - 150, cy - 150, 300, 300);
+        P.busto(gg, cx, cy + 30, 1.85, miPinta(), A.te < F_NADIE ? 'tension' : 'triste', A.t, { mira: { x: Math.sin(A.t * 0.07), y: -0.2 } });
+        gg.restore(); T.circ(gg, cx, cy, 146); T.linea(gg, 7);
+        if (A.te < F_NADIE) {
+          T.texto(gg, 'MESA DE PRUEBA', 320, 640, 44, { color: T.PAPEL });
+          T.texto(gg, 'Sin apuesta. Buscando a alguien en directo…', 320, 704, 24, ui(T.PAPEL, { peso: 700 }));
+        } else {
+          TV.sello(gg, 'NADIE EN DIRECTO', 320, 640, 46, T.ROJO, (A.te - F_NADIE) / 8);
+          T.texto(gg, 'Juegas contra Ajuste, el rival de la casa', 320, 730, 24, ui(T.PAPEL, { peso: 700 }));
+        }
+        return;
+      }
+      // cara a cara: dos viñetas cortadas en diagonal; cada uno con su gesto, inclinado hacia el otro
+      const k = ZZ.e.out3(Math.min(1, (A.te - F_VS) / 14));
+      const camR = c => T.poli(c, [[0, 0], [PW, 0], [PW, 330], [0, 510]]);
+      const camY = c => T.poli(c, [[0, 510], [PW, 330], [PW, PH], [0, PH]]);
+      const gR = P.gesto(d.rival.aspecto, 'reto'), gY = P.gesto(miPinta(), 'reto');
+      gg.save(); camR(gg); gg.clip();
+      gg.fillStyle = T.mezcla(d.rival.color, T.PAPEL, 0.12); gg.fillRect(0, 0, PW, PH);
+      T.rayos(gg, 430, 230, 900, 14, 0.2, T.mezcla(d.rival.color, T.TINTA, 0.16));
+      gg.fillStyle = T.trama(gg, T.mezcla(d.rival.color, T.TINTA, 0.3), 14, 3.2); gg.fillRect(0, 0, PW, PH);
+      gg.save(); gg.translate(474 + (1 - k) * 460, 548); gg.rotate(-0.1);
+      P.entero(gg, 0, 0, 1.96, d.rival.aspecto, gR[1], A.t, gR[0]);
+      gg.restore(); gg.restore();
+      // mi viñeta va en azul marino: así destaca cualquier ropa, también la azul
+      gg.save(); camY(gg); gg.clip();
+      gg.fillStyle = T.mezcla(T.AZUL, T.TINTA, 0.5); gg.fillRect(0, 0, PW, PH);
+      T.rayos(gg, 220, 640, 900, 14, 0.5, T.mezcla(T.AZUL, T.TINTA, 0.36));
+      gg.fillStyle = T.trama(gg, T.mezcla(T.AZUL, T.TINTA, 0.68), 14, 3.2); gg.fillRect(0, 0, PW, PH);
+      gg.save(); gg.translate(176 - (1 - k) * 460, 1050); gg.rotate(0.1);
+      P.entero(gg, 0, 0, 2.1, miPinta(), gY[1], A.t, gY[0]);
+      gg.restore(); gg.restore();
+      gg.beginPath(); gg.moveTo(-10, 513); gg.lineTo(PW + 10, 327); T.linea(gg, 12);
+      // nombres
+      gg.save(); gg.translate(28 - (1 - k) * 400, 0);
+      T.texto(gg, d.rival.nombre, 0, 92, d.rival.nombre.length > 7 ? 40 : 56, { al: 'left', color: T.PAPEL });
+      etiqueta(gg, 2, 146, d.rival.etiqueta, !!d.rival.vivo);
+      const sub = d.rival.sub.split(': ');
+      sub.forEach((ln, i) => T.texto(gg, ln + (i < sub.length - 1 ? ':' : ''), 4, 198 + i * 30, 22, ui(T.PAPEL, { al: 'left' })));
+      gg.restore();
+      gg.save(); gg.translate(612 + (1 - k) * 400, 0);
+      T.texto(gg, yoNombre(), 0, 640, yoNombre().length > 3 ? 40 : 84, { al: 'right', color: T.PAPEL });
+      gg.restore();
+      // el VS, grande y sobre la diagonal, sin pisar caras ni gorros
+      const kv = Math.min(1, (A.te - F_VS - 8) / 10);
+      if (kv > 0) {
+        gg.save(); gg.translate(372, 424); gg.scale(ZZ.mix(2.4, 1, ZZ.e.out3(kv)), ZZ.mix(2.4, 1, ZZ.e.out3(kv))); gg.rotate(-0.1);
+        gg.save(); gg.translate(7, 10); T.estallido(gg, 0, 0, 94, 11, 0.2, T.TINTA, 7, 3); gg.restore();
+        T.estallido(gg, 0, 0, 94, 11, 0.2, T.AMARILLO, 7, 3);
+        T.texto(gg, 'VS', 0, 3, 74, { color: T.ROJO, w: 13 });
+        gg.restore();
+      }
+      if (A.te > F_VS + 40) {
+        const aviso = d.tipo === 'vivo' && A.te > F_VS + 60 ? 'ESPERANDO…' : 'TOCA PARA EMPEZAR';
+        const an = T.ancho(gg, aviso, 23, T.F_UI, 900) + 52, sube = Math.sin(A.t * 0.2) * 3;
+        T.rr(gg, 612 - an, 764, an, 52, 26); T.pinta(gg, T.TINTA, 6);
+        T.rr(gg, 612 - an, 756 + sube, an, 52, 26); T.pinta(gg, T.AMARILLO, 6);
+        T.texto(gg, aviso, 612 - an / 2, 783 + sube, 23, ui(T.TINTA));
+      }
+    },
+    fuera(gg, L) {
+      if (A.te >= F_VS) { placas(gg, L); return; }
+      // mientras se busca: mi placa abajo y, arriba, el hueco del rival
+      miPlaca(gg, L, false);
+      const m = medidasPlacas(L), r = m.hT / 2 - 7, cx = 30 + r + 9, cy = m.yT + m.hT / 2;
+      T.rr(gg, 30, m.yT + 9, 660, m.hT, Math.min(30, m.hT / 2.6)); T.pinta(gg, T.TINTA, 6);
+      T.rr(gg, 30, m.yT, 660, m.hT, Math.min(30, m.hT / 2.6)); T.pinta(gg, T.PAPEL, 6);
+      T.circ(gg, cx, cy, r); T.pinta(gg, '#2B2536', 5.5);
+      T.texto(gg, '?', cx, cy + 3, r * 1.2, { color: T.AMARILLO, w: 0 });
+      T.texto(gg, 'BUSCANDO RIVAL' + '.'.repeat(1 + ((A.t >> 4) % 3)), cx + r + 16, cy + 2, Math.min(30, m.hT * 0.3), { al: 'left', color: T.TINTA, w: 0 });
+    },
+  };
+  function etiqueta(gg, x, y, txt, vivoEnDirecto) {
+    const an = T.ancho(gg, txt, 24, T.F_UI, 900) + 50;
+    T.rr(gg, x, y - 21, an, 42, 21); T.pinta(gg, vivoEnDirecto ? T.ROJO : T.TINTA, 0);
+    T.circ(gg, x + 20, y, 7); T.pinta(gg, vivoEnDirecto ? '#FFFFFF' : T.AMARILLO, 0);
+    T.texto(gg, txt, x + 36, y + 1, 24, ui(T.PAPEL, { al: 'left' }));
+  }
+
+  // --- zapeo ------------------------------------------------------------------------------------------
+  EST.zap = {
+    entra() { son.zap(); A.color = A.ronda.canal.color; A.temblor = 6; },
+    tic() { if (A.te >= 22) ir('orden'); },
+    pinta(gg) {
+      const c = A.ronda.canal;
+      TV.nieve(gg, A.t, 1);
+      if ((A.te >> 1) % 4) {
+        T.texto(gg, 'CANAL ' + String(c.num).padStart(2, '0'), 320, 372, 86, { color: T.MENTA, w: 16, ds: 6 });
+        T.texto(gg, c.nombre, 320, 462, 40, { color: T.PAPEL, w: 9, ds: 4 });
+      }
+    },
+    fuera(gg, L) { placas(gg, L); },
+  };
+
+  // --- rótulo del programa y orden -----------------------------------------------------------------------
+  EST.orden = {
+    tic() {
+      vivo();
+      if (A.te === F_ROTULO + 9) { A.temblor = 10; son.orden(); }
+      if (A.te >= F_ROTULO + A.ronda.fOrden) { son.sintonia(A.ronda.canal.id); ir('juego'); }
+    },
+    pinta(gg) {
+      escena(gg);
+      if (A.te >= F_ROTULO) TV.orden(gg, A.ronda.canal, A.te - F_ROTULO, A.ronda.fOrden, A.t);
+    },
+    fuera(gg, L) { placas(gg, L); },
+  };
+
+  // --- el juego -------------------------------------------------------------------------------------------
+  EST.juego = {
+    entra() { A.cola.length = 0; A.dedo = null; },
+    tic() {
+      const r = A.ronda, v = r.vis;
+      v.t++;
+      if (v.parada > 0) v.parada--;
+      else {
+        const ent = A.cola.splice(0);
+        const au = ZZ.depura.auto;      // solo en las pruebas: la casa juega por mí con esa destreza
+        if (au !== undefined && au !== null) {
+          if (!r.auto) r.auto = { mem: {}, rng: ZZ.azar(r.semilla ^ 0xABCDEF) };
+          for (const x of r.canal.casa(r.yo.e, r.auto.mem, r.auto.rng, au, r.yo.n) || []) ent.push(x);
+        }
+        r.yo.avanza(ent);
+        r.canal.efectos(r.yo.e, v, r.yo.ev, son);
+        animos('yo', r.yo.ev, r.canal);
+        if (r.rival) { r.rival.avanza(); animos('rival', r.rival.p.ev, r.canal); }
+        v.n = r.yo.n;
+        if (A.duelo.tipo === 'vivo') { const pv = r.yo.puntos(); if (pv !== A.duelo.pEnv) { A.duelo.pEnv = pv; publica({ p: pv }); } }
+        if (r.yo.n === 240 || r.yo.n === 260 || r.yo.n === 280) son.tic();
+      }
+      v.ch.paso();
+      if (v.temblor > 0) v.temblor--;
+      if (r.yo.fin) finRonda();
+    },
+    pinta(gg) { escena(gg); },
+    fuera(gg, L) { placas(gg, L); },
+  };
+
+  // --- ¡tiempo! ---------------------------------------------------------------------------------------------
+  EST.remate = {
+    entra() {
+      const r = A.ronda, L = A.L;
+      if (r.agotado) {
+        son.pum(); A.temblor = 16;
+        const x = 616, y = L.tiraY + L.tiraH / 2;
+        T.estrellas(A.ch, x, y, 10, T.AMARILLO, 13, 26);
+        T.polvo(A.ch, x, y, 10, T.PAPEL, 8, 26);
+        A.ch.mas({ tipo: 'anillo', x, y, r: 20, R: 200, w: 18, color: '#FFFFFF', vida: 20 });
+        T.palabra(A.ch, '¡PUM!', x - 30, y - 70, T.AMARILLO, 64);
+      } else son.hecho();
+    },
+    tic() { vivo(); if (A.te >= 44) ir(A.duelo.tipo === 'vivo' ? 'espera' : 'marcador'); },
+    pinta(gg) {
+      escena(gg);
+      const r = A.ronda, k = Math.min(1, A.te / 9);
+      gg.save(); gg.translate(320, 176); gg.rotate(-0.06);
+      const s = ZZ.mix(2.6, 1, ZZ.e.out3(k)); gg.scale(s, s); gg.globalAlpha = Math.min(1, k * 2);
+      T.texto(gg, r.agotado ? '¡TIEMPO!' : (r.canal.hechoTxt || '¡HECHO!'), 0, 0, 100, { color: r.agotado ? T.ROJO : T.AMARILLO, w: 19, ds: 8 });
+      gg.restore();
+    },
+    fuera(gg, L) { placas(gg, L); },
+  };
+
+  // --- marcador del canal ---------------------------------------------------------------------------------------
+  EST.marcador = {
+    tic() {
+      vivo();
+      const d = A.duelo, r = A.ronda, ens = d.tipo === 'ensayo', solo = !d.rival;
+      if (A.te > 12 && A.te < 50 && A.te % 4 === 0) son.cuenta();
+      if (A.te === 58) {
+        A.temblor = 8;
+        if (ens) {
+          const k = r.canal.id + r.nivel;
+          r.record = r.pYo > (perfil.mejores[k] || 0);
+          if (r.record) { perfil.mejores[k] = r.pYo; guardaPerfil(); son.punto(); confetiLados(); } else son.golpe();
+        } else if (solo) {
+          son.golpe();
+        } else {
+          d.res[d.i] = r.gana; d.pts[d.i] = [r.pYo, r.pRival];
+          if (r.gana > 0) { son.punto(); animo('yo', 1); animo('rival', -1); confetiLados(); }
+          else if (r.gana < 0) { son.sinPunto(); animo('yo', -1); animo('rival', 1); }
+          else son.golpe();
+        }
+      }
+      if (!ens && A.te >= (solo ? 130 : 170)) sigue();
+    },
+    toca() { if (A.te > 76 && A.duelo.tipo !== 'ensayo') sigue(); },
+    pinta(gg) { escena(gg, true); tarjeta(gg); },
+    fuera(gg, L) { placas(gg, L); },
+  };
+  function confetiPantalla(x, y, n) {
+    const L = A.L;
+    T.confeti(A.ch, L.px + x, L.py + y, n || 46, [T.AMARILLO, T.ROJO, T.MENTA, T.AZUL, T.PAPEL], 15);
+  }
+  const confetiLados = () => { confetiPantalla(40, 250, 26); confetiPantalla(600, 250, 26); };
+  // Cifra amarilla sobre píldora de tinta: el mismo dato se ve igual en la tarjeta y en las placas.
+  function cifra(gg, txt, xDer, y, tam) {
+    const an = Math.max(T.ancho(gg, txt, tam), tam * 1.3) + tam * 0.7;
+    T.rr(gg, xDer - an, y - tam * 0.68, an, tam * 1.36, tam * 0.5); T.pinta(gg, T.TINTA, 0);
+    T.texto(gg, txt, xDer - an / 2, y + 2, tam, { color: T.AMARILLO, w: 0 });
+  }
+  function tarjeta(gg) {
+    const d = A.duelo, r = A.ronda, ens = d.tipo === 'ensayo';
+    const ke = ZZ.e.outBack(Math.min(1, A.te / 14));
+    TV.velo(gg, 0.7 * Math.min(1, A.te / 10));
+    gg.save();
+    gg.translate(320, 398 + (1 - ke) * 600); gg.rotate(-0.025);
+    const w = 560, h = 428;
+    T.rr(gg, -w / 2 + 10, -h / 2 + 14, w, h, 30); T.pinta(gg, T.TINTA, 7);
+    T.rr(gg, -w / 2, -h / 2, w, h, 30); T.pinta(gg, T.PAPEL, 7);
+    gg.save(); T.rr(gg, -w / 2, -h / 2, w, h, 30); gg.clip();
+    gg.fillStyle = r.canal.color; gg.fillRect(-w / 2, -h / 2, w, 66);
+    gg.fillStyle = T.TINTA; gg.fillRect(-w / 2, -h / 2 + 66, w, 6);
+    gg.restore();
+    T.texto(gg, 'CANAL ' + r.canal.num + ' · ' + r.canal.nombre, 0, -h / 2 + 36, 28, ui(T.PAPEL));
+    const kc = ZZ.e.out3(ZZ.lim((A.te - 10) / 40, 0, 1)), listo = A.te >= 58;
+    if (!d.rival) {
+      T.texto(gg, ens ? 'TU PUNTUACIÓN' : yoNombre(), 0, -98, 26, ui(T.TINTA));
+      T.texto(gg, String(Math.round(r.pYo * kc)), 0, 0, 120, { color: T.AMARILLO, w: 18, ds: 7 });
+      const mej = perfil.mejores[r.canal.id + r.nivel] || 0;
+      T.texto(gg, ens ? 'NIVEL ' + r.nivel + ' · MEJOR MARCA: ' + mej : d.tipo === 'reto' ? 'Queda grabado para tu rival' : 'Después le toca a JUGADOR 2', 0, 104, 24, ui(T.TINTA));
+      if (listo && r.record) TV.sello(gg, '¡RÉCORD!', 160, 152, 36, T.MENTA, (A.te - 58) / 8);
+      gg.restore();
+      if (listo && ens) {
+        boton(gg, 'otra', 60, 640, 250, 86, 'OTRA VEZ', T.ROJO, () => { A.duelo = creaEnsayo(r.canal.id, r.nivel); empiezaRonda(); }, { tam: 34 });
+        boton(gg, 'niveles', 330, 640, 250, 86, 'CANALES', T.AZUL, () => ir('ensayo'), { tam: 34 });
+      }
+      return;
+    }
+    const filas = [
+      { nombre: yoNombre(), p: r.pYo, a: miPinta(), color: T.AZUL, gana: r.gana > 0, y: -58 },
+      { nombre: d.rival.nombre, p: r.pRival, a: d.rival.aspecto, color: d.rival.color, gana: r.gana < 0, y: 62 },
+    ];
+    for (const f of filas) {
+      if (listo && f.gana) { T.rr(gg, -w / 2 + 14, f.y - 54, w - 28, 108, 22); T.pinta(gg, T.AMARILLO, 5); }
+      const ax = -w / 2 + 74;
+      gg.save(); T.circ(gg, ax, f.y, 46); gg.fillStyle = f.color; gg.fill(); gg.clip();
+      P.busto(gg, ax, f.y + 10, 0.64, f.a, listo ? (f.gana ? 'euforico' : r.gana === 0 ? 'neutro' : 'triste') : 'tension', A.t);
+      gg.restore(); T.circ(gg, ax, f.y, 46); T.linea(gg, 5);
+      T.texto(gg, f.nombre, ax + 62, f.y + 2, f.nombre.length > 7 ? 26 : 38, { al: 'left', color: T.TINTA, w: 0 });
+      cifra(gg, String(Math.round(f.p * kc)), w / 2 - 28, f.y, 52);
+    }
+    if (listo) {
+      const txt = r.gana > 0 ? '¡CANAL TUYO!' : r.gana < 0 ? 'SE LO LLEVA' : 'EMPATE';
+      TV.sello(gg, txt, 0, h / 2 - 30, 40, r.gana > 0 ? T.MENTA : r.gana < 0 ? T.ROJO : T.AZUL, (A.te - 58) / 8);
+    }
+    gg.restore();
+  }
+
+  // --- en directo: esperar al otro ----------------------------------------------------------------------
+  function avisoEspera(gg, arriba) {
+    escena(gg, true);
+    TV.velo(gg, 0.62);
+    T.texto(gg, arriba, 320, 372, 44, { color: T.PAPEL });
+    T.texto(gg, A.duelo.rival.nombre + '.'.repeat(1 + ((A.t >> 4) % 3)), 320, 436, 44, { color: T.AMARILLO });
+  }
+  EST.espera = {
+    tic() {
+      vivo();
+      const d = A.duelo, r = A.ronda, o = d.rv;
+      if (o && o.r.length > d.i) { r.pRival = o.r[d.i]; r.gana = r.pYo > r.pRival ? 1 : r.pYo < r.pRival ? -1 : 0; ir('marcador'); }
+    },
+    pinta(gg) { avisoEspera(gg, 'ESPERANDO A'); },
+    fuera(gg, L) { placas(gg, L); },
+  };
+  EST.listos = {
+    tic() {
+      vivo();
+      const d = A.duelo, o = d.rv;
+      if (o && (o.i > d.i || (o.i === d.i && o.f !== 'espera'))) empiezaRonda();
+    },
+    pinta(gg) { avisoEspera(gg, '¿LISTOS? FALTA'); },
+    fuera(gg, L) { placas(gg, L); },
+  };
+
+  // --- con un amigo: elegir cómo ---------------------------------------------------------------------
+  function caja(gg, y, h, titulo, txt) {
+    T.rr(gg, 32, y + 10, 584, h, 24); T.pinta(gg, T.TINTA, 6);
+    T.rr(gg, 28, y, 584, h, 24); T.pinta(gg, T.PAPEL, 6);
+    T.texto(gg, titulo, 52, y + 40, 30, { al: 'left', color: T.TINTA, w: 0 });
+    parrafo(gg, txt, 52, y + 80, 536, 21, T.TINTA);
+  }
+  const SIN_SALA = 'Aquí no se puede abrir la sala. Hace falta entrar con una cuenta de Claude que tenga acceso a la página.';
+  EST.amigo = {
+    entra() { A.color = T.ROJO; A.duelo = null; A.ronda = null; publica({ est: 'menu', a: null, d: null }); },
+    pinta(gg) {
+      fondoPantalla(gg, T.ROJO, 320, 100);
+      T.texto(gg, 'CON UN AMIGO', 320, 68, 56, { color: T.AMARILLO, w: 12 });
+      caja(gg, 118, 180, 'EN ESTE MÓVIL', 'Por turnos: os pasáis el móvil.');
+      boton(gg, 'turnos', 52, 224, 250, 56, '¡A JUGAR!', T.ROJO, () => { A.duelo = creaTurnos(); ir('pase'); }, { tam: 27 });
+      caja(gg, 314, 204, 'A DISTANCIA', 'Juegas, mandas un código por mensaje y tu rival juega contra tu partida cuando quiera.');
+      boton(gg, 'retoC', 52, 444, 250, 56, 'CREAR RETO', T.ROJO, () => { A.duelo = creaReto(); empiezaRonda(); }, { tam: 25 });
+      boton(gg, 'pegaC', 316, 444, 284, 56, 'TENGO UN CÓDIGO', T.AZUL, () => ir('codPega'), { tam: 21 });
+      const no = red.estado === 'no';
+      caja(gg, 534, 204, 'EN DIRECTO', no ? 'Aquí no se abre la sala: hace falta entrar con una cuenta de Claude que tenga acceso.' : (red.modo === 'web' ? 'Los dos a la vez, cada uno en su móvil. Pásale el enlace de esta página.' : 'Los dos a la vez, cada uno en su móvil y con su cuenta de Claude.'));
+      if (!no) boton(gg, 'sala', 52, 664, 250, 56, 'A LA SALA', T.AZUL, () => ir('sala'), { tam: 26 });
+      boton(gg, 'volver', 400, 760, 200, 56, 'VOLVER', T.TINTA, () => ir('titulo'), { tam: 24 });
+    },
+    fuera(gg, L) { miPlaca(gg, L, false); },
+  };
+
+  // --- a distancia: el código de un reto ----------------------------------------------------------------
+  function copia() {
+    const fin = ok => { A.copiado = ok ? 1 : -1; if (!ok) { try { cajaCod.focus(); cajaCod.select(); } catch (e) { /* nada */ } } };
+    try { navigator.clipboard.writeText(A.codigo).then(() => fin(true), () => fin(false)); } catch (e) { fin(false); }
+  }
+  EST.codListo = {
+    entra() { A.color = T.MENTA; A.duelo = null; A.ronda = null; A.copiado = 0; cajaCod.readOnly = true; cajaCod.value = A.codigo; },
+    pinta(gg) {
+      fondoPantalla(gg, T.MENTA, 320, 200);
+      T.texto(gg, 'RETO LISTO', 320, 80, 62, { color: T.AMARILLO, w: 13 });
+      parrafo(gg, 'Copia este código y mándaselo por mensaje. Quien lo pegue en su ZikZak jugará contra esta partida tuya.', 320, 142, 540, 22, T.PAPEL, true);
+      T.texto(gg, 'Tus puntos: ' + A.misPts.join(' · '), 320, 428, 24, ui(T.PAPEL));
+      boton(gg, 'copia', 90, 470, 460, 100, A.copiado > 0 ? '¡COPIADO!' : 'COPIAR CÓDIGO', A.copiado > 0 ? T.AZUL : T.ROJO, copia, { tam: 42 });
+      if (A.copiado < 0) parrafo(gg, 'No se ha podido copiar solo. Mantén pulsado el código y elige «Copiar».', 320, 616, 520, 22, T.PAPEL, true);
+      else if (A.copiado > 0) parrafo(gg, 'Pégalo en un mensaje. En su ZikZak: «Con un amigo» y «Tengo un código».', 320, 616, 520, 22, T.PAPEL, true);
+      boton(gg, 'menu', 220, 742, 200, 62, 'MENÚ', T.TINTA, () => ir('titulo'), { tam: 26 });
+    },
+    fuera(gg, L) { miPlaca(gg, L, false); },
+  };
+  EST.codPega = {
+    entra() {
+      A.color = T.MENTA; A.duelo = null; A.ronda = null; A.reto = null; A.codVisto = '';
+      cajaCod.readOnly = false; cajaCod.value = ''; cajaCod.placeholder = 'Mantén pulsado aquí y pega el código';
+    },
+    tic() { const v = cajaCod.value; if (v !== A.codVisto) { A.codVisto = v; A.reto = v ? ZZ.codigo.lee(v) : null; } },
+    pinta(gg) {
+      fondoPantalla(gg, T.MENTA, 320, 200);
+      T.texto(gg, 'TENGO UN CÓDIGO', 320, 80, 50, { color: T.AMARILLO, w: 12 });
+      parrafo(gg, 'Pega en el recuadro el código que te han mandado.', 320, 156, 540, 22, T.PAPEL, true);
+      const c = A.reto;
+      if (c) {
+        T.circ(gg, 136, 506, 62); T.pinta(gg, T.TINTA, 0);
+        gg.save(); T.circ(gg, 130, 498, 62); gg.fillStyle = T.AZUL; gg.fill(); gg.clip();
+        P.busto(gg, 130, 512, 0.86, P.PINTAS[c.pinta % P.PINTAS.length], 'contento', A.t);
+        gg.restore(); T.circ(gg, 130, 498, 62); T.linea(gg, 6);
+        T.texto(gg, aliasLimpio(c.alias), 214, 480, 38, { al: 'left', color: T.PAPEL });
+        T.texto(gg, 'te reta a tres canales', 216, 526, 24, ui(T.PAPEL, { al: 'left' }));
+        boton(gg, 'aceptaC', 90, 596, 460, 100, '¡ACEPTO!', T.ROJO, () => { try { cajaCod.blur(); } catch (e) { /* nada */ } A.duelo = creaRetado(c); ir('buscando'); }, { tam: 46 });
+      } else if (A.codVisto) parrafo(gg, 'Ese código no vale. Cópialo entero, desde «ZZ1-» hasta el final.', 320, 480, 520, 23, T.PAPEL, true);
+      boton(gg, 'volver', 220, 742, 200, 62, 'VOLVER', T.TINTA, () => ir('amigo'), { tam: 26 });
+    },
+    fuera(gg, L) { miPlaca(gg, L, false); },
+  };
+
+  // --- por turnos: a quién le toca ------------------------------------------------------------------
+  EST.pase = {
+    entra() { A.color = T.MENTA; A.ronda = null; },
+    pinta(gg) {
+      const d = A.duelo, f2 = d.fase === 2, a = miPinta(), ge = P.gesto(a, 'reto');
+      fondoPantalla(gg, T.MENTA, 320, 360);
+      T.texto(gg, f2 ? 'PASA EL MÓVIL' : 'POR TURNOS', 320, 84, 62, { color: T.AMARILLO, w: 13 });
+      T.circ(gg, 326, 349, 168); T.pinta(gg, T.TINTA, 0);
+      T.circ(gg, 320, 340, 168); T.pinta(gg, '#2B2536', 7);
+      gg.save(); T.circ(gg, 320, 340, 164); gg.clip();
+      gg.fillStyle = T.trama(gg, '#463E62', 13, 2.8); gg.fillRect(150, 170, 340, 340);
+      P.entero(gg, 320, 690, 1.9, a, ge[1], A.t, ge[0]);
+      gg.restore();
+      T.circ(gg, 320, 340, 168); T.linea(gg, 7);
+      T.texto(gg, d.yoNombre, 320, 560, 56, { color: T.PAPEL });
+      T.texto(gg, f2 ? 'Te toca contra la grabación de JUGADOR 1' : 'Tres canales seguidos. Después juega JUGADOR 2.', 320, 618, 23, ui(T.PAPEL, { peso: 700 }));
+      boton(gg, 'pintaT', 44, 690, 250, 76, 'OTRA PINTA', T.AMARILLO, () => { d.pintas[d.fase - 1] = (d.pintas[d.fase - 1] + 1) % P.PINTAS.length; son.cara(); }, { tam: 24, ctxt: T.TINTA, fuente: T.F_UI, peso: 900 });
+      boton(gg, 'empieza', 320, 690, 276, 76, '¡EMPEZAR!', T.ROJO, () => empiezaRonda(), { tam: 34 });
+    },
+  };
+
+  // --- la sala: quién tiene la página abierta ahora ---------------------------------------------------
+  function reta(peer) { A.sala.reto = peer; A.sala.desde = A.t; publica({ est: 'reto', a: peer, d: null }); }
+  EST.sala = {
+    entra() {
+      A.color = T.ROJO; A.duelo = null; A.ronda = null; A.sala = { reto: null, desde: 0 };
+      red.inicia();
+      publica({ est: 'sala', a: null, d: null, i: 0, f: 'espera', p: 0, r: [], m: [0, 0] });
+    },
+    tic() {
+      const yo = red.miPeer(), sl = A.sala;
+      if (!yo || !sl.reto) return;
+      const o = red.de(sl.reto);
+      if (!o || A.t - sl.desde > 60 * 30) { sl.reto = null; publica({ est: 'sala', a: null }); return; }
+      if ((o.est !== 'reto' && o.est !== 'duelo') || o.a !== yo) return;
+      // los dos se han retado: reparte los canales quien tenga la etiqueta menor, y el otro los copia
+      const base = { est: 'duelo', a: o.peer, i: 0, f: 'espera', p: 0, r: [], m: [0, 0] };
+      if (yo < o.peer) { const def = defVivo(); A.duelo = creaVivo(def, o); publica(Object.assign(base, { d: def })); ir('buscando'); }
+      else if (o.d) { A.duelo = creaVivo(o.d, o); publica(Object.assign(base, { d: null })); ir('buscando'); }
+    },
+    pinta(gg) {
+      fondoPantalla(gg, T.ROJO, 320, 100);
+      T.texto(gg, 'LA SALA', 320, 78, 66, { color: T.AMARILLO, w: 13 });
+      const yo = red.miPeer(), sl = A.sala;
+      if (red.estado === 'no') parrafo(gg, SIN_SALA, 320, 330, 500, 25, T.PAPEL, true);
+      else if (!yo || !red.conectada()) {
+        T.texto(gg, 'CONECTANDO' + '.'.repeat(1 + ((A.t >> 4) % 3)), 320, 340, 40, { color: T.PAPEL });
+        if (A.te > 480) parrafo(gg, 'El servidor del directo no contesta. Mientras tanto podéis retaros con un código: «Con un amigo», «A distancia».', 320, 420, 500, 23, T.PAPEL, true);
+      }
+      else {
+        T.texto(gg, 'Aquí sale quien tiene la página abierta ahora mismo', 320, 134, 21, ui(T.PAPEL, { peso: 700 }));
+        const gente = red.gente().slice(0, 4);
+        if (!gente.length) {
+          T.texto(gg, 'NADIE MÁS POR AQUÍ', 320, 320, 40, { color: T.PAPEL });
+          parrafo(gg, (red.modo === 'web' ? 'Pásale el enlace de esta página a tu amigo o amiga y dile que entre en «Con un amigo» y «A la sala».' : 'Comparte la página con tu amigo o amiga desde el menú Compartir y dile que entre en «Con un amigo».'), 320, 384, 500, 23, T.PAPEL, true);
+        }
+        gente.forEach((o, i) => {
+          const y = 166 + i * 128;
+          const meReta = o.est === 'reto' && o.a === yo, leReto = sl.reto === o.peer, ocupado = o.est === 'duelo' && o.a !== yo;
+          T.rr(gg, 32, y + 9, 584, 112, 24); T.pinta(gg, T.TINTA, 6);
+          T.rr(gg, 28, y, 584, 112, 24); T.pinta(gg, meReta ? T.AMARILLO : T.PAPEL, 6);
+          gg.save(); T.circ(gg, 84, y + 56, 44); gg.fillStyle = T.AZUL; gg.fill(); gg.clip();
+          P.busto(gg, 84, y + 66, 0.62, P.PINTAS[o.pinta], meReta ? 'contento' : 'neutro', A.t + i * 31);
+          gg.restore(); T.circ(gg, 84, y + 56, 44); T.linea(gg, 5);
+          T.texto(gg, o.alias, 142, y + 40, 27, { al: 'left', color: T.TINTA, w: 0 });
+          const est = meReta ? '¡Te reta!' : leReto ? 'Esperando su respuesta…' : ocupado ? 'Está en un duelo' : o.est === 'menu' ? 'En el menú' : 'En la sala';
+          T.texto(gg, (o.otra ? 'Tu otra pestaña · ' : '') + est, 142, y + 78, 19, ui(T.TINTA, { al: 'left', peso: 700 }));
+          if (meReta) boton(gg, 'r' + i, 432, y + 22, 166, 60, 'ACEPTAR', T.MENTA, () => reta(o.peer), { tam: 24 });
+          else if (leReto) boton(gg, 'r' + i, 432, y + 22, 166, 60, 'CANCELAR', T.TINTA, () => { sl.reto = null; publica({ est: 'sala', a: null }); }, { tam: 21 });
+          else if (!ocupado) boton(gg, 'r' + i, 432, y + 22, 166, 60, 'RETAR', T.ROJO, () => reta(o.peer), { tam: 26 });
+        });
+      }
+      T.texto(gg, 'Te ven como ' + perfil.alias, 40, 712, 22, ui(T.PAPEL, { al: 'left' }));
+      boton(gg, 'alias', 40, 742, 260, 62, 'OTRO NOMBRE', T.AMARILLO, () => { perfil.alias = red.aliasNuevo(); guardaPerfil(); publica({}); }, { tam: 22, ctxt: T.TINTA, fuente: T.F_UI, peso: 900 });
+      boton(gg, 'volver', 400, 742, 200, 62, 'VOLVER', T.TINTA, () => ir('titulo'), { tam: 26 });
+    },
+    fuera(gg, L) { miPlaca(gg, L, false); },
+  };
+
+  // --- resultado del duelo ----------------------------------------------------------------------------------
+  // Por turnos siempre se celebra a quien gana, sea quien sea; en los demás modos se mira desde quien juega.
+  const signoFinal = () => (A.duelo.tipo === 'turnos' ? Math.abs(A.final.gana) : A.final.gana);
+  EST.final = {
+    entra() {
+      const g = signoFinal();
+      A.color = g > 0 ? T.AMARILLO : g < 0 ? T.VIOLETA : T.AZUL;
+      if (g > 0) { son.gana(); confetiLados(); } else if (g < 0) son.pierde(); else son.golpe();
+    },
+    tic() { if (signoFinal() > 0 && A.te % 40 === 20 && A.te < 200) confetiLados(); },
+    pinta(gg) {
+      const f = A.final, d = A.duelo, turnos = d.tipo === 'turnos', g = signoFinal();
+      const base = g > 0 ? T.AMARILLO : g < 0 ? T.mezcla(T.VIOLETA, T.TINTA, 0.35) : T.AZUL;
+      gg.fillStyle = base; gg.fillRect(0, 0, PW, PH);
+      T.rayos(gg, 320, 420, 1000, 14, A.t * 0.006, T.mezcla(base, g > 0 ? T.ROJO : T.TINTA, 0.2));
+      gg.save(); gg.globalAlpha = 0.5; gg.fillStyle = T.trama(gg, T.mezcla(base, T.TINTA, 0.3), 14, 3); gg.fillRect(0, 0, PW, PH); gg.restore();
+      const k = ZZ.e.outBack(Math.min(1, A.te / 14));
+      const titulo = turnos ? (f.gana > 0 ? '¡GANA EL 2!' : f.gana < 0 ? '¡GANA EL 1!' : 'EMPATE') : (f.gana > 0 ? '¡GANAS!' : f.gana < 0 ? 'PIERDES' : 'EMPATE');
+      gg.save(); gg.translate(320, 92); gg.rotate(-0.05); gg.scale(k, k);
+      T.texto(gg, titulo, 0, 0, turnos ? 84 : 104, { color: g > 0 ? T.ROJO : T.PAPEL, w: 19, ds: 8 });
+      gg.restore();
+      // a la izquierda y en grande, quien juega; por turnos, quien gana
+      const cambio = turnos && f.gana < 0;
+      const aIzq = cambio ? d.rival.aspecto : miPinta(), aDer = cambio ? miPinta() : d.rival.aspecto;
+      const gIzq = P.gesto(aIzq, g > 0 ? 'gana' : g < 0 ? 'pierde' : 'reto');
+      const gDer = P.gesto(aDer, g < 0 ? 'gana' : g > 0 ? 'pierde' : 'reto');
+      // un medallón oscuro detrás de cada uno: así cualquier ropa destaca sobre cualquier fondo
+      const medallon = (x, y, r) => {
+        T.circ(gg, x + 6, y + 9, r); T.pinta(gg, T.TINTA, 0);
+        T.circ(gg, x, y, r); T.pinta(gg, '#2B2536', 7);
+        gg.save(); T.circ(gg, x, y, r - 4); gg.clip(); gg.fillStyle = T.trama(gg, '#463E62', 13, 2.8); gg.fillRect(x - r, y - r, r * 2, r * 2); gg.restore();
+      };
+      gg.save(); gg.beginPath(); gg.rect(0, 0, PW, 584); gg.clip();
+      medallon(204, 404, 182); medallon(474, 436, 132);
+      P.entero(gg, 468, g > 0 ? 690 : 742, g < 0 ? 1.5 : 1.4, aDer, gDer[1], A.t + 30, gDer[0]);
+      P.entero(gg, 204, g < 0 ? 704 : 778, g < 0 ? 1.7 : 2.0, aIzq, gIzq[1], A.t, gIzq[0]);
+      gg.restore();
+      // la mesa
+      T.rr(gg, -20, 574, PW + 40, 300, 0); T.pinta(gg, '#2B2536', 7);
+      gg.fillStyle = T.PAPEL; gg.fillRect(0, 584, PW, 6);
+      d.rondas.forEach((r, i) => {
+        const c = ZZ.canales[r.id], x = 34 + i * 194, y = 610, v = d.res[i];
+        T.rr(gg, x + 5, y + 8, 184, 64, 16); T.pinta(gg, T.TINTA, 5);
+        T.rr(gg, x, y, 184, 64, 16); T.pinta(gg, turnos || v > 0 ? T.PAPEL : T.mezcla(T.PAPEL, T.TINTA, 0.3), 5);
+        T.rr(gg, x + 8, y + 8, 48, 48, 12); T.pinta(gg, c.color, 4.5);
+        T.texto(gg, String(c.num), x + 32, y + 33, 30, { w: 5, ds: 2 });
+        T.texto(gg, turnos ? d.pts[i][1] + '–' + d.pts[i][0] : d.pts[i][0] + '–' + d.pts[i][1], x + 120, y + 34, 19, ui(T.TINTA));
+      });
+      const sube = f.ahora - f.antes, mar = f.mias + '–' + f.suyas + ' en canales';
+      const linea = d.tipo === 'casa' ? mar + ' · cuota de pantalla ' + cuotaTxt(f.ahora) + (sube > 0 ? ' ▲' : sube < 0 ? ' ▼' : '')
+        : d.tipo === 'yo' ? mar + ' · contra ti la cuota no cambia'
+          : d.tipo === 'retado' ? mar + ' · contra el reto de ' + d.rival.nombre
+          : turnos ? 'Canales ganados · Jugador 1: ' + f.suyas + ' · Jugador 2: ' + f.mias
+            : f.ido ? 'Tu rival se ha ido: el duelo es tuyo' : mar + ' · en directo contra ' + d.rival.nombre;
+      T.texto(gg, linea, 320, 706, 22, ui(T.PAPEL));
+      if (A.te > 30) {
+        if (turnos) {
+          boton(gg, 'otraT', 36, 738, 340, 76, 'OTRA PARTIDA', T.ROJO, () => { A.duelo = creaTurnos(); ir('pase'); }, { tam: 30 });
+          boton(gg, 'menu', 396, 738, 210, 76, 'MENÚ', T.AZUL, () => ir('titulo'), { tam: 28 });
+        } else if (d.tipo === 'retado') {
+          boton(gg, 'otroC', 36, 738, 340, 76, 'CREAR MI RETO', T.ROJO, () => { A.duelo = creaReto(); empiezaRonda(); }, { tam: 30 });
+          boton(gg, 'menu', 396, 738, 210, 76, 'MENÚ', T.AZUL, () => ir('titulo'), { tam: 28 });
+        } else if (d.tipo === 'vivo') {
+          boton(gg, 'salaF', 36, 738, 340, 76, 'A LA SALA', T.ROJO, () => ir('sala'), { tam: 32 });
+          boton(gg, 'menu', 396, 738, 210, 76, 'MENÚ', T.AZUL, () => ir('titulo'), { tam: 28 });
+        } else {
+          boton(gg, 'revancha', 36, 738, 268, 76, 'OTRO DUELO', T.ROJO, () => { A.duelo = creaDuelo('casa'); ir('buscando'); }, { tam: 30 });
+          boton(gg, 'contrati2', 320, 738, 186, 76, 'CONTRA TI', T.MENTA, () => { A.duelo = creaDuelo('yo'); ir('buscando'); }, { tam: 21 });
+          boton(gg, 'menu', 522, 738, 84, 76, 'MENÚ', T.AZUL, () => ir('titulo'), { tam: 18 });
+        }
+      }
+    },
+    fuera(gg, L) { placas(gg, L); },
+  };
+
+  // --- placas de arriba y de abajo --------------------------------------------------------------------------
+  function medidasPlacas(L) {
+    const hT = ZZ.lim(L.arriba - 24, 70, 140), hB = ZZ.lim(L.abajo - 34, 66, 140);
+    return { hT, yT: Math.max(6, L.arriba - hT - 34), hB, yB: L.by + L.bh + 24 + Math.max(0, (L.abajo - 36 - hB) * 0.3) };
+  }
+  function placas(gg, L) {
+    const d = A.duelo, r = A.ronda, m = medidasPlacas(L);
+    if (!d) return;
+    const jugando = A.est === 'juego' || A.est === 'remate' || A.est === 'marcador' || A.est === 'espera';
+    // en directo, los puntos del rival son los que publica su móvil
+    const suyos = () => { const o = d.rv; return !o ? 0 : o.r.length > d.i ? o.r[d.i] : o.i === d.i ? o.p : 0; };
+    const enJuego = A.est === 'juego';
+    const n = d.rondas.length;
+    const pips = s => d.rondas.map((_, i) => (d.res[i] === undefined ? 0 : d.res[i] * s > 0 ? 1 : -1));
+    if (d.rival) {
+      TV.placa(gg, 30, m.yT, 660, m.hT, {
+        nombre: d.rival.nombre, etiqueta: d.rival.etiqueta, vivo: !!d.rival.vivo, aspecto: d.rival.aspecto, color: d.rival.color,
+        expr: exprDe('rival', enJuego ? 'tension' : 'neutro'), t: A.t + 77, golpe: A.caras.rival.golpe,
+        puntos: !jugando || !r ? null : d.tipo === 'vivo' ? (A.est === 'marcador' ? r.pRival : suyos()) : r.rival ? (enJuego ? r.rival.puntos() : r.pRival) : null,
+        pips: n > 1 ? pips(-1) : null,
+      });
+    } else if (d.tipo === 'turnos' || d.tipo === 'reto') {
+      const h = Math.min(m.hT, 96), y = L.arriba - h - 22;
+      T.rr(gg, 30, y + 9, 660, h, 26); T.pinta(gg, T.TINTA, 6);
+      T.rr(gg, 30, y, 660, h, 26); T.pinta(gg, T.PAPEL, 6);
+      T.texto(gg, d.tipo === 'reto' ? 'TU RETO' : 'POR TURNOS', 56, y + h / 2 + 2, Math.min(32, h * 0.38), { al: 'left', color: T.TINTA, w: 0 });
+      T.texto(gg, d.tipo === 'reto' ? 'SE ESTÁ GRABANDO TU PARTIDA' : 'JUGADOR 2 ESPERA SU TURNO', 666, y + h / 2 + 1, 20, ui(T.TINTA, { al: 'right' }));
+    } else if (r) {
+      // ensayo: arriba va la ficha del canal en vez de un rival
+      const h = Math.min(m.hT, 96), y = L.arriba - h - 22;
+      T.rr(gg, 30, y + 9, 660, h, 26); T.pinta(gg, T.TINTA, 6);
+      T.rr(gg, 30, y, 660, h, 26); T.pinta(gg, T.PAPEL, 6);
+      T.texto(gg, 'ENSAYO', 56, y + h / 2 + 2, Math.min(34, h * 0.4), { al: 'left', color: T.TINTA, w: 0 });
+      const an = T.ancho(gg, 'NIVEL ' + r.nivel, 22, T.F_UI, 900) + 36;
+      T.rr(gg, 236, y + h / 2 - 22, an, 44, 22); T.pinta(gg, T.TINTA, 0);
+      T.texto(gg, 'NIVEL ' + r.nivel, 236 + an / 2, y + h / 2 + 1, 22, ui(T.AMARILLO));
+      const mej = perfil.mejores[r.canal.id + r.nivel] || 0;
+      T.texto(gg, mej ? 'MEJOR MARCA: ' + mej : 'SIN MARCA TODAVÍA', 666, y + h / 2 + 1, 21, ui(T.TINTA, { al: 'right' }));
+    }
+    TV.placa(gg, 30, m.yB, 660, m.hB, {
+      nombre: yoNombre(), aspecto: miPinta(), color: T.AZUL,
+      expr: exprDe('yo', enJuego ? 'tension' : 'neutro'), t: A.t, golpe: A.caras.yo.golpe,
+      puntos: jugando && r ? (enJuego ? r.yo.puntos() : r.pYo) : null, pips: n > 1 ? pips(1) : null,
+      sub: d.tipo === 'ensayo' ? 'Sin rival y sin apuesta' : null,
+    });
+  }
+
+  // =====================================================================================
+  // BUCLE
+  // =====================================================================================
+  function tic() {
+    A.t++; A.te++;
+    sigueRival();
+    const E = EST[A.est];
+    if (E.tic) E.tic();
+    A.ch.paso();
+    if (A.temblor > 0) A.temblor--;
+    A.caras.yo.golpe *= 0.86; A.caras.rival.golpe *= 0.86;
+  }
+
+  // El fondo y el aparato no cambian de un fotograma a otro: se dibujan una vez y se copian.
+  const CON_ANTENAS = { carga: 1, titulo: 1, ensayo: 1, muestra: 1, amigo: 1, pase: 1, codListo: 1, codPega: 1 };
+  let capaFija = null;
+  function pintaFijo(dx, dy) {
+    const antenas = !!CON_ANTENAS[A.est];
+    const k = A.color + '|' + lienzo.width + '|' + lienzo.height + '|' + A.s + '|' + A.ox + '|' + antenas;
+    if (!capaFija || capaFija.k !== k) {
+      const c = (capaFija && capaFija.c) || document.createElement('canvas');
+      c.width = lienzo.width; c.height = lienzo.height;
+      const x = c.getContext('2d');
+      x.setTransform(A.s, 0, 0, A.s, A.ox, 0);
+      TV.fondo(x, A.L, A.color, 0);
+      TV.cuerpo(x, A.L, antenas);
+      capaFija = { k, c };
+    }
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    if (dx || dy) { g.fillStyle = TV.colorFondo(A.color); g.fillRect(0, 0, lienzo.width, lienzo.height); }
+    g.drawImage(capaFija.c, Math.round(dx * A.s), Math.round(dy * A.s));
+  }
+
+  function pinta() {
+    const L = A.L, E = EST[A.est];
+    colocaCaja();
+    const tx = A.temblor > 0 ? (Math.random() - 0.5) * A.temblor * 1.4 : 0, ty = A.temblor > 0 ? (Math.random() - 0.5) * A.temblor * 1.4 : 0;
+    pintaFijo(tx, ty);
+    g.setTransform(A.s, 0, 0, A.s, A.ox, 0);
+    A.botones.length = 0;
+    g.save();
+    g.translate(tx, ty);
+    if (E.fuera) E.fuera(g, L);
+    TV.pantalla(g, L, gg => E.pinta(gg));
+    const r = A.ronda;
+    const tras = r && (A.est === 'remate' || A.est === 'marcador');
+    const k = r && (A.est === 'juego' || tras) ? (r.agotado ? 1 : r.yo.n / ZZ.PASOS) : 0;
+    TV.mecha(g, L, k, A.t, !!r && A.est === 'juego', !!(tras && r.agotado));
+    g.restore();
+    A.ch.dibuja(g, 0);
+  }
+
+  let antes = 0, acum = 0;
+  function cuadro(ts) {
+    if (!antes) antes = ts;
+    acum += Math.min(100, ts - antes); antes = ts;
+    const paso = 1000 / ZZ.HZ;
+    let n = 0;
+    if (ZZ.depura.pausa) acum = 0;
+    while (acum >= paso && n < 5) { tic(); acum -= paso; n++; }
+    if (acum > paso) acum = 0;
+    pinta();
+    requestAnimationFrame(cuadro);
+  }
+
+  window.addEventListener('resize', mide);
+  if (window.ResizeObserver) new ResizeObserver(mide).observe(lienzo);
+  mide();
+  requestAnimationFrame(cuadro);
+  red.inicia();
+  publica({ est: 'menu' });
+
+  // Las letras tardan un instante en llegar.
+  const listo = () => { if (A.est === 'carga') ir('titulo'); };
+  if (document.fonts && document.fonts.load) {
+    Promise.all([document.fonts.load('40px "Bowlby One"'), document.fonts.load('900 20px Rubik'), document.fonts.load('700 20px Rubik')]).then(listo, listo);
+    setTimeout(listo, 2500);
+  } else listo();
+
+  // Para las pruebas automáticas y para mirar una pantalla concreta.
+  Object.assign(ZZ.depura, { ir, creaDuelo, creaEnsayo, creaTurnos, creaReto, empiezaRonda, EST, guarda, pinta, mide, pasos: n => { for (let i = 0; i < n; i++) tic(); mide(); pinta(); },
+    // Manda el lienzo al servidor de este equipo, que lo guarda en .tmp/capturas/.
+    captura: nombre => new Promise(res => { mide(); pinta(); lienzo.toBlob(b => fetch('/captura/' + nombre, { method: 'POST', body: b }).then(r => res(r.status), () => res(0)), 'image/png'); }) });
+})();
+//# sourceURL=zz/app.js
+</script>
+<script>
+/* ZikZak · pruebas automáticas
+   Se lanzan desde la consola con ZZ.pruebas(). Comprueban lo que más adelante hará el servidor:
+   que la misma semilla y las mismas entradas dan siempre el mismo resultado. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ;
+
+  ZZ.pruebas = function (semillas) {
+    semillas = semillas || 40;
+    const fallos = [], tabla = {};
+    const anota = (ok, msg) => { if (!ok) fallos.push(msg); };
+    for (const id of Object.keys(ZZ.canales)) {
+      const canal = ZZ.canales[id];
+      for (let nivel = 1; nivel <= 3; nivel++) {
+        const medias = {};
+        for (const d of [0.1, 0.3, 0.5, 0.7, 0.9]) {
+          let suma = 0, min = 1e9, max = -1, acabanAntes = 0;
+          for (let s = 1; s <= semillas; s++) {
+            const sem = (s * 2654435761) >>> 0;
+            const a = ZZ.grabaCasa(canal, sem, nivel, d);
+            const b = ZZ.grabaCasa(canal, sem, nivel, d);
+            anota(a.puntos === b.puntos && a.grab.length === b.grab.length, id + nivel + ' no repite con la misma semilla ' + sem);
+            const rep = new ZZ.Repeticion(canal, sem, nivel, a.grab);
+            const p = rep.hastaElFinal();
+            anota(p === a.puntos, id + nivel + ' la repetición da ' + p + ' y la partida dio ' + a.puntos + ' (semilla ' + sem + ')');
+            anota(a.puntos >= 0 && a.puntos <= 1000 && Number.isInteger(a.puntos), id + nivel + ' puntos fuera de rango: ' + a.puntos);
+            anota(a.pasos <= ZZ.PASOS, id + nivel + ' dura más de la cuenta');
+            suma += a.puntos; min = Math.min(min, a.puntos); max = Math.max(max, a.puntos);
+            if (a.pasos < ZZ.PASOS) acabanAntes++;
+          }
+          medias[d] = Math.round(suma / semillas) + ' (' + min + '–' + max + ')';
+        }
+        // sin tocar nada no se puede ganar
+        const quieta = new ZZ.Repeticion(canal, 12345, nivel, []).hastaElFinal();
+        anota(quieta <= 100, id + nivel + ' da ' + quieta + ' puntos sin jugar');
+        medias.quieta = quieta;
+        tabla[id + ' n' + nivel] = medias;
+      }
+    }
+    return { ok: fallos.length === 0, fallos: fallos.slice(0, 12), nFallos: fallos.length, tabla };
+  };
+})();
+//# sourceURL=zz/pruebas.js
+</script>
+</body></html>
