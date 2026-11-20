@@ -45,7 +45,7 @@
   'use strict';
   const ZZ = window.ZZ = window.ZZ || {};
 
-  ZZ.VERSION = '0.8';
+  ZZ.VERSION = '0.9';
   ZZ.HZ = 60;          // pasos de lógica por segundo
   ZZ.PASOS = 300;      // cinco segundos
   ZZ.PW = 640;         // tamaño lógico de la pantalla de la tele
@@ -609,6 +609,10 @@
     musical: {
       bajo: [45, 45, 45, 45, 48, 48, 43, 43, 45, 45], onda: 'square',
       mel: [76, 0, 76, 79, 0, 81, 79, 76, 0, 74, 76, 79, 0, 81, 84, 81, 79, 0, 76, 74],
+    },
+    burbujas: {
+      bajo: [48, 48, 55, 55, 53, 53, 48, 48, 55, 48], onda: 'sine',
+      mel: [84, 0, 88, 91, 0, 88, 84, 81, 0, 84, 88, 91, 0, 95, 91, 88, 84, 0, 81, 84],
     },
   };
   S.sintonia = function (id) {
@@ -2422,7 +2426,7 @@
 </script>
 <script>
 /* ZikZak · canal 6 · Bricolaje · ¡CLAVA!
-   La barra sube y baja. Un golpe de martillo en el punto justo clava el clavo. */
+   La fuerza recorre el medidor. Toca al alinear el cursor con la marca dorada. */
 (function () {
   'use strict';
   const ZZ = window.ZZ, T = ZZ.tinta;
@@ -2431,7 +2435,7 @@
     { vel: 0.025, zona: 0.17, clavos: 1 },
     { vel: 0.041, zona: 0.115, clavos: 1 },
     { vel: 0.062, zona: 0.075, clavos: 2 }];
-  const C = { fondo: '#2D6BFF', fondoS: '#2146A8', madera: '#C77A3D', maderaS: '#8C4D2A', metal: '#C9D6E2', metalS: '#71879A', amarillo: '#FFC928' };
+  const C = { fondo: '#172844', fondoS: '#101C32', panel: '#223B5D', madera: '#B96F42', maderaS: '#77452F', metal: '#D4E1E8', metalS: '#71879A', amarillo: '#FFD45A', verde: '#59D69B' };
 
   function fuerzaEn(e, n) {
     const q = (e.fase + n * NIV[e.nivel].vel) % 2;
@@ -2441,10 +2445,7 @@
   function init(semilla, nivel) {
     const rng = ZZ.azar(semilla), N = NIV[nivel], clavos = [];
     for (let i = 0; i < N.clavos; i++) clavos.push(ZZ.lim(rng.entre(0.46, 0.7) + (i ? rng.entre(-0.07, 0.07) : 0), 0.3, 0.78));
-    return {
-      semilla, nivel, fase: rng.entre(0, 2), clavos, activa: 0, fuerza: 0, golpes: 0,
-      espera: 0, cool: 0, suma: 0, resuelto: false, hecho: false, ev: [],
-    };
+    return { semilla, nivel, fase: rng.entre(0, 2), clavos, activa: 0, fuerza: 0, golpes: 0, espera: 0, cool: 0, suma: 0, resuelto: false, hecho: false, ev: [] };
   }
 
   function golpe(e, n) {
@@ -2468,11 +2469,9 @@
 
   function puntuacion(e) { return ZZ.lim(Math.round(e.suma / e.clavos.length), 0, 1000); }
 
-  // La casa busca el siguiente paso cercano al punto justo y añade error según su destreza.
   function casa(e, mem, rng, d, n) {
     if (mem.golpes !== e.golpes) {
-      mem.golpes = e.golpes;
-      mem.paso = -1;
+      mem.golpes = e.golpes; mem.paso = -1;
       if (!e.resuelto) {
         const desde = n + e.espera + 3, objetivo = e.clavos[e.activa];
         let mejor = 1e9;
@@ -2483,63 +2482,70 @@
         mem.paso = ZZ.lim(mem.paso + Math.round(rng.campana() * ZZ.mix(18, 2, d)), desde, ZZ.PASOS - 2);
       }
     }
-    return n === mem.paso ? [{ t: 'd', x: 320, y: 350 }] : [];
+    return n === mem.paso ? [{ t: 'd', x: 320, y: 420 }] : [];
   }
 
   function fondo(g) {
     g.fillStyle = C.fondo; g.fillRect(0, 0, ZZ.PW, ZZ.PH);
-    g.fillStyle = T.trama(g, C.fondoS, 16, 3); g.fillRect(0, 0, ZZ.PW, ZZ.PH);
-    T.texto(g, 'BRICOLAJE', 320, 82, 46, { color: T.PAPEL, w: 9 });
-    T.texto(g, '¡CLAVA!', 320, 140, 70, { color: C.amarillo, w: 11 });
-    T.vol(g, c => T.rr(c, 52, 198, 536, 30, 10), C.madera, { sombra: C.maderaS, dx: 0, dy: 10, w: 6 });
-    for (const x of [110, 320, 530]) { T.vol(g, c => T.rr(c, x - 34, 148, 68, 54, 10), C.metal, { sombra: C.metalS, dx: -6, dy: -6, w: 5 }); }
-    T.vol(g, c => T.rr(c, 0, 700, 640, 180, 0), C.maderaS, { sombra: '#5E2D22', dx: 0, dy: 10, w: 0 });
+    g.fillStyle = T.trama(g, C.fondoS, 18, 3); g.fillRect(0, 0, ZZ.PW, ZZ.PH);
+    T.texto(g, 'BRICOLAJE', 320, 78, 42, { color: T.PAPEL, w: 8 });
+    T.texto(g, '¡CLAVA!', 320, 137, 68, { color: C.amarillo, w: 10 });
+    T.vol(g, c => T.rr(c, 42, 185, 556, 304, 24), C.panel, { sombra: C.fondoS, dx: 0, dy: 12, w: 5 });
+    T.texto(g, 'REGULA LA FUERZA', 320, 237, 24, { color: T.PAPEL, fuente: T.F_UI, peso: 900, w: 3 });
+    T.vol(g, c => T.rr(c, 0, 740, 640, 120, 0), C.fondoS, { sombra: '#0A1323', dx: 0, dy: 8, w: 0 });
   }
 
   function medidor(g, e) {
-    const x = 320, y = 244, h = 320, w = 92, zona = NIV[e.nivel].zona;
-    T.vol(g, c => T.rr(c, x - w / 2, y, w, h, 22), C.metal, { sombra: C.metalS, dx: -9, dy: -10, w: 8 });
-    const fy = y + h * (1 - e.fuerza), ty = y + h * (1 - e.clavos[e.activa < e.clavos.length ? e.activa : e.clavos.length - 1]);
-    const zh = h * zona;
-    T.rr(g, x - w / 2 - 18, ty - zh, w + 36, zh * 2, 14); T.pinta(g, C.amarillo, 0, T.TINTA); g.globalAlpha = 0.25; g.fillStyle = C.amarillo; g.fill(); g.globalAlpha = 1;
-    g.beginPath(); g.moveTo(x - 72, ty); g.lineTo(x + 72, ty); T.linea(g, 9, C.amarillo);
-    T.vol(g, c => T.rr(c, x - 25, fy - 18, 50, 36, 12), T.ROJO, { sombra: '#B51F34', dx: -6, dy: -6, w: 6 });
-    T.texto(g, 'PUNTO JUSTO', x, 600, 24, { color: C.amarillo, fuente: T.F_UI, peso: 900, w: 4 });
+    const x0 = 108, x1 = 532, y = 365, w = x1 - x0, zona = NIV[e.nivel].zona;
+    const objetivo = e.clavos[Math.min(e.activa, e.clavos.length - 1)];
+    const tx = x0 + objetivo * w, cx = x0 + e.fuerza * w;
+    T.vol(g, c => T.rr(c, x0 - 9, y - 24, w + 18, 48, 23), C.metalS, { sombra: '#17263A', dx: 0, dy: 7, w: 4 });
+    T.rr(g, x0, y - 16, w, 32, 16); T.pinta(g, '#EAF2F5', 0);
+    T.rr(g, tx - zona * w, y - 21, zona * w * 2, 42, 18); T.pinta(g, C.amarillo, 0);
+    g.globalAlpha = 0.25; g.fillStyle = '#FFFFFF'; g.fillRect(tx - zona * w, y - 17, zona * w * 2, 9); g.globalAlpha = 1;
+    T.vol(g, c => T.rr(c, cx - 12, y - 30, 24, 60, 10), T.ROJO, { sombra: '#9E2438', dx: 0, dy: 4, w: 3 });
+    T.circ(g, tx, y, 8); T.pinta(g, C.panel, 0);
+    T.texto(g, 'SUAVE', x0, 420, 17, { color: '#B9C9D8', fuente: T.F_UI, peso: 800, w: 2 });
+    T.texto(g, 'FUERTE', x1, 420, 17, { color: '#B9C9D8', fuente: T.F_UI, peso: 800, w: 2 });
+    T.texto(g, 'PUNTO JUSTO', tx, 319, 21, { color: C.amarillo, fuente: T.F_UI, peso: 900, w: 3 });
   }
 
-  function martillo(g, e) {
-    const y = 615 - e.fuerza * 125;
-    g.save(); g.translate(470, y); g.rotate(-0.45 + Math.sin(e.fuerza * Math.PI) * 0.18);
-    T.tubo(g, c => { c.moveTo(-5, 8); c.lineTo(-72, 116); }, C.madera, 24, 6);
-    T.vol(g, c => T.rr(c, -62, -30, 132, 58, 15), C.metal, { sombra: C.metalS, dx: -7, dy: -8, w: 7 });
+  function martillo(g, x, y, golpeado) {
+    g.save(); g.translate(x, y); g.rotate(golpeado ? -0.72 : -0.38);
+    T.vol(g, c => T.rr(c, -9, 8, 18, 106, 8), C.madera, { sombra: C.maderaS, dx: -4, dy: -4, w: 4 });
+    T.vol(g, c => T.rr(c, -53, -18, 106, 38, 12), C.metal, { sombra: C.metalS, dx: -5, dy: -5, w: 5 });
     g.restore();
   }
 
   function dibuja(g, e, vis) {
     T.capa(g, vis, 'bricolaje', fondo);
     medidor(g, e);
-    T.vol(g, c => T.rr(c, 190, 676, 260, 96, 16), C.madera, { sombra: C.maderaS, dx: -8, dy: -10, w: 7 });
+    T.texto(g, e.clavos.length > 1 ? 'CLAVA LOS DOS CLAVOS' : 'UN GOLPE, EN EL MOMENTO JUSTO', 320, 535, 22, { color: T.PAPEL, fuente: T.F_UI, peso: 900, w: 3 });
+    T.vol(g, c => T.rr(c, 73, 605, 494, 126, 20), C.madera, { sombra: C.maderaS, dx: 0, dy: 10, w: 7 });
+    T.rr(g, 93, 622, 454, 12, 6); T.pinta(g, '#D99560', 0);
+    const sep = e.clavos.length > 1 ? [255, 390] : [320];
     for (let i = 0; i < e.clavos.length; i++) {
-      const x = 280 + i * 80, clavado = i < e.activa;
-      T.tubo(g, c => { c.moveTo(x, 642); c.lineTo(x, 717 - (clavado ? 18 : 0)); }, C.metal, 12, 4);
-      T.vol(g, c => T.circ(c, x, 640, 19), clavado ? T.MENTA : C.metal, { sombra: C.metalS, dx: -5, dy: -5, w: 5 });
+      const x = sep[i], clavado = i < e.activa;
+      T.tubo(g, c => { c.moveTo(x, 623); c.lineTo(x, clavado ? 683 : 706); }, C.metal, 12, 4);
+      T.vol(g, c => T.rr(c, x - 23, 615, 46, 15, 7), clavado ? C.verde : C.metal, { sombra: C.metalS, dx: -3, dy: -3, w: 3 });
+      if (i === e.activa && !e.resuelto) T.circ(g, x, 686, 7), T.pinta(g, C.amarillo, 0);
     }
-    martillo(g, e);
-    T.texto(g, e.activa >= e.clavos.length ? '¡CLAVADO!' : 'TOCA PARA GOLPEAR', 320, 790, 25, { color: T.PAPEL, fuente: T.F_UI, peso: 900, w: 4 });
+    martillo(g, 495, 565, e.cool > 5);
+    T.texto(g, e.activa >= e.clavos.length ? '¡TRABAJO HECHO!' : 'TOCA PARA GOLPEAR', 320, 793, 23, { color: C.amarillo, fuente: T.F_UI, peso: 900, w: 4 });
     vis.ch.dibuja(g, 0); vis.ch.dibuja(g, 1);
   }
 
   function efectos(e, vis, ev, son) {
     for (const x of ev) if (x.t === 'golpe') {
-      T.estrellas(vis.ch, 320, 680, x.bueno ? 9 : 4, x.bueno ? T.AMARILLO : T.PAPEL, 10, x.bueno ? 22 : 14, 1);
-      T.palabra(vis.ch, x.bueno ? '¡CLAVADO!' : x.pts ? '¡CASI!' : '¡FLOJO!', 320, 160, x.bueno ? T.AMARILLO : T.PAPEL, 46, 1);
+      T.estrellas(vis.ch, 320, 594, x.bueno ? 9 : 4, x.bueno ? T.AMARILLO : T.PAPEL, 10, x.bueno ? 22 : 14, 1);
+      T.palabra(vis.ch, x.bueno ? '¡CLAVADO!' : x.pts ? '¡CASI!' : '¡FLOJO!', 320, 165, x.bueno ? T.AMARILLO : T.PAPEL, 46, 1);
       son && (x.bueno ? son.clavado() : son.golpe());
     }
   }
 
   ZZ.canales.bricolaje = {
     id: 'bricolaje', num: 6, nombre: 'BRICOLAJE', orden: '¡CLAVA!',
-    pista: 'Toca cuando la barra esté en el punto justo',
+    pista: 'Toca cuando el cursor coincida con la marca dorada',
     rotulo: 'TALLER EN DIRECTO: «GOLPE SECO»',
     color: C.fondo, color2: C.madera, color3: T.AMARILLO,
     animo: x => x.t === 'golpe' ? (x.pts >= 350 ? 1 : -1) : 0,
@@ -2799,6 +2805,143 @@
   };
 })();
 //# sourceURL=zz/canales/musical.js
+</script>
+<script>
+/* ZikZak · canal nuevo · Burbujas · ¡PLIP!
+   Una burbuja asciende hacia un aro. Toca justo cuando lo atraviese. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ, T = ZZ.tinta;
+
+  const NIV = [null,
+    { vel: 2.55, amp: 24, freq: 0.035, tol: 82, cantidad: 1, intervalo: 0 },
+    { vel: 3.35, amp: 52, freq: 0.045, tol: 66, cantidad: 1, intervalo: 0 },
+    { vel: 4.15, amp: 70, freq: 0.052, tol: 54, cantidad: 2, intervalo: 112 }];
+  const C = { fondo: '#173D63', profundo: '#102B49', agua: '#2A7391', aro: '#FFE08A', burbuja: '#9DEBEB', brillo: '#F5FFFF', rosa: '#F6A7D5' };
+  const ARO = { x: 320, y: 410 };
+
+  function posicion(e, b, n) {
+    if (n < b.inicio) return null;
+    const N = NIV[e.nivel], t = n - b.inicio;
+    return { x: 320 + Math.sin(t * N.freq + b.fase) * N.amp, y: 735 - t * N.vel, t };
+  }
+
+  function init(semilla, nivel) {
+    const rng = ZZ.azar(semilla), N = NIV[nivel], burbujas = [];
+    for (let i = 0; i < N.cantidad; i++) burbujas.push({ inicio: i * N.intervalo, fase: rng.entre(-1.5, 1.5), estado: 'sube', pts: 0, pos: null });
+    return { semilla, nivel, burbujas, activa: 0, suma: 0, resueltas: 0, espera: 0, hecho: false, ev: [] };
+  }
+
+  function puntuar(b, p, nivel) {
+    const distancia = Math.hypot(p.x - ARO.x, p.y - ARO.y);
+    return ZZ.lim(Math.round((1 - distancia / NIV[nivel].tol) * 1000), 0, 1000);
+  }
+
+  function paso(e, entradas, n) {
+    for (const b of e.burbujas) if (b.estado === 'sube') b.pos = posicion(e, b, n);
+    const b = e.burbujas[e.activa];
+    if (b && b.estado === 'sube' && b.pos) {
+      for (const en of entradas) {
+        if (en.t !== 'd') continue;
+        const pts = puntuar(b, b.pos, e.nivel);
+        if (pts > 0) {
+          b.estado = 'pop'; b.pts = pts; e.suma += pts; e.resueltas++; e.ev.push({ t: 'pop', x: b.pos.x, y: b.pos.y, pts });
+        } else e.ev.push({ t: 'aire' });
+        break;
+      }
+      if (b.estado === 'sube' && b.pos.y < 250) {
+        b.estado = 'perdida'; e.resueltas++; e.ev.push({ t: 'pierde' });
+      }
+      if (b.estado !== 'sube') {
+        e.activa++;
+        if (e.resueltas >= e.burbujas.length) e.espera = 1;
+      }
+    }
+    if (e.espera > 0 && ++e.espera > 34) e.hecho = true;
+  }
+
+  function puntuacion(e) {
+    return e.burbujas.length ? ZZ.lim(Math.round(e.suma / e.burbujas.length), 0, 1000) : 0;
+  }
+
+  function casa(e, mem, rng, d, n) {
+    if (mem.objetivo !== e.activa) {
+      mem.objetivo = e.activa; mem.paso = -1;
+      const b = e.burbujas[e.activa];
+      if (b) {
+        let mejor = 1e9;
+        for (let i = Math.max(n + 1, b.inicio); i < ZZ.PASOS - 3; i++) {
+          const p = posicion(e, b, i), err = Math.hypot(p.x - ARO.x, p.y - ARO.y);
+          if (err < mejor) { mejor = err; mem.paso = i; }
+        }
+        mem.paso = ZZ.lim(mem.paso + Math.round(rng.campana() * ZZ.mix(22, 3, d)), n + 1, ZZ.PASOS - 2);
+      }
+    }
+    return n === mem.paso ? [{ t: 'd', x: 320, y: 410 }] : [];
+  }
+
+  function fondo(g) {
+    g.fillStyle = C.fondo; g.fillRect(0, 0, ZZ.PW, ZZ.PH);
+    g.fillStyle = T.trama(g, C.profundo, 22, 3); g.fillRect(0, 0, ZZ.PW, ZZ.PH);
+    for (const [x, y, r] of [[82, 250, 6], [550, 330, 10], [110, 540, 9], [522, 660, 5], [460, 230, 4]]) {
+      T.circ(g, x, y, r); T.pinta(g, '#91DDE1', 0);
+    }
+    T.texto(g, 'BURBUJAS', 320, 82, 46, { color: T.PAPEL, w: 8 });
+    T.texto(g, '¡PLIP!', 320, 145, 70, { color: C.aro, w: 10 });
+    T.vol(g, c => T.rr(c, 0, 744, 640, 130, 0), C.agua, { sombra: C.profundo, dx: 0, dy: 10, w: 0 });
+    T.rr(g, 0, 744, 640, 10, 0); T.pinta(g, '#56A8B0', 0);
+  }
+
+  function aro(g, vis) {
+    const pulso = Math.sin(vis.t * 0.12) * 3;
+    g.beginPath(); g.arc(ARO.x, ARO.y, 76 + pulso, 0, Math.PI * 2); T.linea(g, 9, C.aro);
+    g.beginPath(); g.arc(ARO.x, ARO.y, 62 + pulso, 0, Math.PI * 2); T.linea(g, 2, '#FFFFFF');
+    T.circ(g, ARO.x, ARO.y, 5); T.pinta(g, C.aro, 0);
+  }
+
+  function dibujaBurbuja(g, p, t, indice) {
+    const r = 43 + Math.sin(t * 0.08 + indice) * 2, color = indice % 2 ? C.rosa : C.burbuja;
+    g.save(); g.globalAlpha = 0.78;
+    T.circ(g, p.x, p.y, r); T.pinta(g, color, 4);
+    g.globalAlpha = 0.96;
+    T.elip(g, p.x - 13, p.y - 18, 13, 7, -0.45); T.pinta(g, C.brillo, 0);
+    T.circ(g, p.x + 18, p.y + 17, 4); T.pinta(g, C.brillo, 0);
+    g.restore();
+  }
+
+  function dibuja(g, e, vis) {
+    T.capa(g, vis, 'burbujas', fondo);
+    aro(g, vis);
+    for (let i = 0; i < e.burbujas.length; i++) {
+      const b = e.burbujas[i];
+      if (b.estado === 'sube' && b.pos && b.pos.y > 180 && b.pos.y < 790) dibujaBurbuja(g, b.pos, vis.t, i);
+    }
+    T.texto(g, e.burbujas.length > 1 ? '¡ATRAVIESA EL ARO DOS VECES!' : 'TOCA CUANDO PASE POR EL ARO', 320, 790, 22, { color: T.PAPEL, fuente: T.F_UI, peso: 900, w: 4 });
+    vis.ch.dibuja(g, 0); vis.ch.dibuja(g, 1);
+  }
+
+  function efectos(e, vis, ev, son) {
+    for (const x of ev) {
+      if (x.t === 'pop') {
+        T.estrellas(vis.ch, x.x, x.y, x.pts >= 700 ? 10 : 5, C.aro, 10, 23, 1);
+        T.palabra(vis.ch, x.pts >= 700 ? '¡PLIP PERFECTO!' : '¡PLIP!', 320, 160, C.aro, 42, 1);
+        son && (x.pts >= 700 ? son.acierto() : son.golpe());
+      } else if (x.t === 'pierde') {
+        T.palabra(vis.ch, '¡SE ESCAPÓ!', 320, 160, T.PAPEL, 42, 1); son && son.fallo();
+      }
+    }
+  }
+
+  ZZ.canales.burbujas = {
+    id: 'burbujas', num: 9, nombre: 'BURBUJAS', orden: '¡PLIP!',
+    pista: 'Toca cuando la burbuja cruce el aro',
+    rotulo: 'ACUARIO EN DIRECTO: «EL ARO»',
+    color: C.fondo, color2: C.agua, color3: C.aro,
+    animo: x => x.t === 'pop' ? (x.pts >= 350 ? 1 : -1) : x.t === 'pierde' ? -1 : 0,
+    init, paso, puntuacion, casa, dibuja, efectos,
+  };
+})();
+//# sourceURL=zz/canales/burbujas.js
 </script>
 <script>
 /* ZikZak · tele
@@ -3279,7 +3422,7 @@
 (function () {
   'use strict';
   const ZZ = window.ZZ, C = ZZ.codigo = {};
-  const IDS = ['cocina', 'tiempo', 'western', 'concurso', 'teletienda', 'bricolaje', 'documental', 'musical'];      // este orden va dentro de los códigos: no se cambia
+  const IDS = ['cocina', 'tiempo', 'western', 'concurso', 'teletienda', 'bricolaje', 'documental', 'musical', 'burbujas'];      // este orden va dentro de los códigos: no se cambia
   const TIPOS = ['d', 'm', 'u'];
   const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 
@@ -3417,6 +3560,7 @@
     est: 'carga', te: 0, t: 0,
     L: TV.mide(1180), s: 1, ox: 0,
     botones: [], pulsado: null, cola: [], dedo: null,
+    ensayoScroll: 0, ensayoMaxScroll: 0, ensayoDedo: null, ensayoUltimoY: 0, ensayoArranqueScroll: 0, ensayoArrastre: false,
     ch: new T.Chispas(),
     color: T.VIOLETA, temblor: 0,
     duelo: null, ronda: null, final: null,
@@ -3468,6 +3612,10 @@
     ev.preventDefault();
     son.inicia();
     const p = pos(ev);
+    if (A.est === 'ensayo') {
+      A.ensayoDedo = ev.pointerId; A.ensayoUltimoY = p.y; A.ensayoArranqueScroll = A.ensayoScroll; A.ensayoArrastre = false;
+      try { lienzo.setPointerCapture(ev.pointerId); } catch (e) { /* nada */ }
+    }
     for (let i = A.botones.length - 1; i >= 0; i--) {
       if (dentro(A.botones[i], p)) { A.pulsado = A.botones[i].id; A.punteroBoton = ev.pointerId; return; }
     }
@@ -3484,11 +3632,26 @@
     if (EST[A.est].toca) EST[A.est].toca(p);
   });
   lienzo.addEventListener('pointermove', function (ev) {
+    if (A.est === 'ensayo' && A.ensayoDedo === ev.pointerId) {
+      const p = pos(ev), dy = p.y - A.ensayoUltimoY;
+      A.ensayoUltimoY = p.y;
+      if (Math.abs(dy) > 0.1) {
+        A.ensayoScroll = ZZ.lim(A.ensayoScroll - dy, 0, A.ensayoMaxScroll || 0);
+        if (Math.abs(A.ensayoScroll - A.ensayoArranqueScroll) > 6) { A.ensayoArrastre = true; A.pulsado = null; }
+      }
+      return;
+    }
     if (A.dedo !== ev.pointerId || A.est !== 'juego') return;
     const e = aJuego(pos(ev), 'm'), u = A.cola[A.cola.length - 1];
     if (u && u.t === 'm') A.cola[A.cola.length - 1] = e; else A.cola.push(e);
   });
   function suelta(ev) {
+    if (A.est === 'ensayo' && A.ensayoDedo === ev.pointerId) {
+      const p = pos(ev), b = A.pulsado && A.botones.find(x => x.id === A.pulsado), arrastre = A.ensayoArrastre;
+      A.ensayoDedo = null; A.pulsado = null;
+      if (!arrastre && b && dentro(b, p) && ev.type === 'pointerup') { son.boton(); b.accion(); }
+      return;
+    }
     if (A.pulsado && A.punteroBoton === ev.pointerId) {
       const p = pos(ev), b = A.botones.find(x => x.id === A.pulsado);
       A.pulsado = null;
@@ -3502,6 +3665,11 @@
   }
   lienzo.addEventListener('pointerup', suelta);
   lienzo.addEventListener('pointercancel', suelta);
+  lienzo.addEventListener('wheel', function (ev) {
+    if (A.est !== 'ensayo') return;
+    ev.preventDefault();
+    A.ensayoScroll = ZZ.lim(A.ensayoScroll + ev.deltaY / Math.max(A.s, 1), 0, A.ensayoMaxScroll || 0);
+  }, { passive: false });
   lienzo.addEventListener('contextmenu', ev => ev.preventDefault());
 
   function boton(gg, id, x, y, w, h, txt, color, accion, o) {
@@ -3787,14 +3955,18 @@
 
   // --- ensayo ------------------------------------------------------------------------------------
   EST.ensayo = {
-    entra() { A.color = T.AZUL; A.duelo = null; A.ronda = null; },
+    entra() { A.color = T.AZUL; A.duelo = null; A.ronda = null; A.ensayoScroll = 0; A.ensayoMaxScroll = 0; A.ensayoDedo = null; },
     pinta(gg) {
       fondoPantalla(gg, T.AZUL, 320, 90);
       T.texto(gg, 'ENSAYO', 320, 86, 84, { color: T.AMARILLO, w: 15 });
       T.texto(gg, 'Sin rival y sin apuesta. Elige canal y nivel.', 320, 158, 24, ui(T.PAPEL, { peso: 700 }));
       const ids = Object.keys(ZZ.canales).sort((a, b) => ZZ.canales[a].num - ZZ.canales[b].num);
+      const maxScroll = Math.max(0, 200 + Math.max(0, ids.length - 1) * 172 + 150 - 690);
+      A.ensayoMaxScroll = maxScroll;
+      A.ensayoScroll = ZZ.lim(A.ensayoScroll, 0, maxScroll);
+      gg.save(); gg.beginPath(); gg.rect(18, 188, 604, 510); gg.clip();
       ids.forEach((id, i) => {
-        const c = ZZ.canales[id], y = 200 + i * 172;
+        const c = ZZ.canales[id], y = 200 + i * 172 - A.ensayoScroll;
         T.rr(gg, 32, y + 10, 584, 150, 26); T.pinta(gg, T.TINTA, 6);
         T.rr(gg, 28, y, 584, 150, 26); T.pinta(gg, T.PAPEL, 6);
         T.rr(gg, 44, y + 18, 84, 84, 20); T.pinta(gg, c.color, 6);
@@ -3808,6 +3980,13 @@
             () => { A.duelo = creaEnsayo(id, n); empiezaRonda(); }, { tam: 40 });
         });
       });
+      gg.restore();
+      if (maxScroll > 0) {
+        const h = 510, th = Math.max(48, h * h / (h + maxScroll)), ty = 188 + (h - th) * (A.ensayoScroll / maxScroll);
+        T.rr(gg, 610, 188, 8, h, 4); T.pinta(gg, T.mezcla(T.PAPEL, T.AZUL, 0.5), 0);
+        T.rr(gg, 610, ty, 8, th, 4); T.pinta(gg, T.AMARILLO, 0);
+        T.texto(gg, 'DESLIZA', 570, 704, 16, ui(T.PAPEL, { al: 'right' }));
+      }
       boton(gg, 'volver', 210, 732, 220, 76, 'VOLVER', T.TINTA, () => ir('titulo'), { tam: 32 });
     },
     fuera(gg, L) { miPlaca(gg, L, false); },
