@@ -45,7 +45,7 @@
   'use strict';
   const ZZ = window.ZZ = window.ZZ || {};
 
-  ZZ.VERSION = '1.2';
+  ZZ.VERSION = '1.3';
   ZZ.HZ = 60;          // pasos de lógica por segundo
   ZZ.PASOS = 300;      // cinco segundos: lo que dura un canal si no dice otra cosa
   ZZ.PW = 640;         // tamaño lógico de la pantalla de la tele
@@ -629,6 +629,18 @@
     deportes: {
       bajo: [43, 50, 43, 50, 48, 55, 48, 55, 43, 50], galope: true, onda: 'square',
       mel: [79, 79, 83, 0, 86, 0, 83, 0, 84, 84, 88, 0, 91, 0, 88, 0, 86, 83, 79, 0],
+    },
+    terror: {
+      bajo: [40, 40, 41, 41, 40, 40, 46, 46, 40, 40], onda: 'triangle',
+      mel: [64, 0, 67, 0, 70, 0, 67, 0, 64, 0, 63, 0, 64, 0, 0, 0, 76, 75, 76, 0],
+    },
+    dibujos: {
+      bajo: [48, 55, 48, 55, 53, 60, 55, 55, 48, 55], galope: true, onda: 'square',
+      mel: [72, 76, 79, 84, 0, 79, 76, 72, 77, 81, 84, 0, 83, 79, 74, 71, 72, 0, 84, 0],
+    },
+    noches: {
+      bajo: [48, 48, 53, 53, 55, 55, 48, 48, 53, 48], onda: 'triangle',
+      mel: [76, 0, 79, 0, 76, 0, 72, 0, 77, 0, 81, 0, 79, 0, 74, 0, 72, 0, 0, 0],
     },
     musical: {
       bajo: [45, 45, 45, 45, 48, 48, 43, 43, 45, 45], onda: 'square',
@@ -3727,21 +3739,22 @@
 </script>
 <script>
 /* ZikZak · canal 11 · Deportes · ¡SALTA!
-   Dura treinta segundos. Una carrera de vallas que va cada vez más deprisa: un toque es un salto.
+   Dura quince segundos. Una carrera de vallas que va cada vez más deprisa: un toque es un salto.
+   Corre una zapatilla. (Empezó durando treinta y con un corredor: al dueño se le hacía eterno y feo.)
    En los niveles altos cruzan balones por arriba: con balón no se salta.
    Mide el aguante: cada valla puntúa según lo centrado que cae el salto; tirarla no da nada. */
 (function () {
   'use strict';
   const ZZ = window.ZZ, T = ZZ.tinta, P = ZZ.personaje;
 
-  const TOTAL = 1800;                    // treinta segundos
+  const TOTAL = 900;                     // quince segundos
   const RX = 176, SUELO = 726;           // por dónde corre
-  const ESC = 1.2;                       // tamaño del corredor
+  const ESC = 1.05;                      // tamaño de la zapatilla
   const J = 36, ALTO = 160;              // lo que dura un salto y lo que sube
   const NIV = [null,
-    { v0: 5.0, v1: 7.4, n: 18, hueco: [72, 104], alto: 64, balones: 0 },
-    { v0: 5.6, v1: 8.6, n: 25, hueco: [52, 76], alto: 76, balones: 4 },
-    { v0: 6.2, v1: 9.8, n: 29, hueco: [46, 60], alto: 86, balones: 7 }];
+    { v0: 5.4, v1: 7.8, n: 9, hueco: [72, 100], alto: 64, balones: 0 },
+    { v0: 6.0, v1: 9.0, n: 12, hueco: [54, 76], alto: 76, balones: 2 },
+    { v0: 6.6, v1: 10.2, n: 14, hueco: [46, 60], alto: 86, balones: 4 }];
   const C = { pista: '#E0623A', pistaS: '#C24E2A', cesped: '#3DBB6B', cespedS: '#2C9A55', grada: '#2B3A8C', gradaS: '#1C2766',
     piel: '#F2B98A', pielS: '#D9925F', pelo: '#5A3A22' };
 
@@ -3757,7 +3770,7 @@
     let llegadas = [110];
     for (let i = 1; i < N.n; i++) llegadas.push(llegadas[i - 1] + rng.entero(N.hueco[0], N.hueco[1]));
     const ult = llegadas[N.n - 1];
-    if (ult > 1660) llegadas = llegadas.map(a => Math.round(110 + (a - 110) * 1550 / (ult - 110)));
+    if (ult > 770) llegadas = llegadas.map(a => Math.round(110 + (a - 110) * 660 / (ult - 110)));
     // cuáles son balones: nunca los dos primeros ni dos seguidos
     const esBalon = [];
     let quedan = N.balones;
@@ -3933,42 +3946,46 @@
     g.restore();
   }
 
-  // El corredor, con los pies en el origen.
-  function corredor(g, e, vis) {
+  // La zapatilla: trota a saltitos, se estira al saltar y se aplasta al caer. El origen es donde pisa.
+  function zapatilla(g, e, vis) {
     const n = vis.n, t = vis.t, y = altura(e, n), aire = y > 0;
-    const tr = vis.tropiezo === undefined ? 99 : t - vis.tropiezo, cae = tr < 20;
-    const fase = e.dist[Math.min(n, TOTAL)] * 0.055, s = Math.sin(fase), c2 = Math.cos(fase);
-    g.save(); g.globalAlpha = 0.28; T.elip(g, RX + 4, SUELO + 12, 56 - y * 0.14, 12 - y * 0.03); g.fillStyle = T.TINTA; g.fill(); g.restore();
-    g.save(); g.translate(RX, SUELO - y + (aire ? 0 : -Math.abs(c2) * 5)); g.scale(ESC, ESC);
-    g.rotate(cae ? 0.55 * Math.sin(tr / 20 * Math.PI) : aire ? -0.1 : 0.12);
-    const pierna = (hx, hy, kx, ky, fx, fy, atras) => {
-      T.tubo(g, c => { c.beginPath(); c.moveTo(hx, hy); c.quadraticCurveTo(kx, ky, fx, fy); }, atras ? C.pielS : C.piel, 13, 5);
-      T.vol(g, c => T.rr(c, fx - 12, fy - 10, 34, 18, 8), atras ? '#D9A21A' : T.AMARILLO, { dx: 0, dy: -5, w: 5 });
+    const tr = vis.tropiezo === undefined ? 99 : t - vis.tropiezo, cae = tr < 24;
+    const fase = e.dist[Math.min(n, TOTAL)] * 0.07;
+    const bote = aire ? 0 : Math.abs(Math.sin(fase)) * 18;
+    const u = aire ? (n - e.salto) / J : 0;
+    let sx = 1, sy = 1;
+    if (aire) { const k = Math.cos(u * Math.PI); sy = 1 + k * 0.15; sx = 1 - k * 0.1; }
+    else { const k = Math.abs(Math.cos(fase)); sy = 1 - k * 0.09; sx = 1 + k * 0.06; }
+    if (vis.aterriza !== undefined && t - vis.aterriza < 7) { const k = 1 - (t - vis.aterriza) / 7; sy = 1 - 0.22 * k; sx = 1 + 0.16 * k; }
+    g.save(); g.globalAlpha = 0.28; T.elip(g, RX + 6, SUELO + 12, 96 - y * 0.25, 13 - y * 0.03); g.fillStyle = T.TINTA; g.fill(); g.restore();
+    // rayas de velocidad
+    g.beginPath(); for (const [dy, l] of [[-40, 46], [-78, 30], [-112, 40]]) { g.moveTo(RX - 124 - ((t * 9 + dy) % 30), SUELO - y - bote + dy); g.lineTo(RX - 124 - l - ((t * 9 + dy) % 30), SUELO - y - bote + dy); } T.linea(g, 5, T.PAPEL);
+    g.save(); g.translate(RX, SUELO - y - bote - (cae ? Math.sin(tr / 24 * Math.PI) * 60 : 0));
+    g.rotate(cae ? ZZ.e.io(tr / 24) * 6.2832 : aire ? -0.34 + u * 0.62 : Math.sin(fase) * 0.11);
+    g.scale(sx * ESC, sy * ESC);
+    const cuerpo = c => {
+      c.beginPath(); c.moveTo(-90, -28); c.lineTo(-94, -116); c.quadraticCurveTo(-92, -146, -60, -142); c.lineTo(-16, -134);
+      c.quadraticCurveTo(12, -90, 62, -78); c.quadraticCurveTo(104, -66, 102, -28); c.closePath();
     };
-    const brazo = (sx, sy, ex, ey, hx, hy, atras) => {
-      T.tubo(g, c => { c.beginPath(); c.moveTo(sx, sy); c.quadraticCurveTo(ex, ey, hx, hy); }, atras ? C.pielS : C.piel, 11, 5);
-      T.circ(g, hx, hy, 9); T.pinta(g, atras ? C.pielS : C.piel, 5);
-    };
-    const meta = e.enMeta;
-    if (aire) { pierna(-4, -80, -42, -66, -66, -40, true); brazo(-8, -148, -40, -150, -54, -182, true); }
-    else { pierna(-2, -80, -10 - s * 24, -46, -s * 42, -Math.max(0, -c2) * 28, true); brazo(-8, -148, -8 + s * 26, -120, s * 40 - 4, -108 - Math.abs(s) * 8, true); }
-    T.vol(g, c => T.rr(c, -24, -104, 48, 36, 12), T.AZUL, { dx: -6, dy: 0, w: 6 });
-    T.vol(g, c => T.rr(c, -26, -162, 54, 70, 20), T.ROJO, { sombra: '#C92F47', dx: -8, dy: 0, w: 6 });
-    T.rr(g, -10, -146, 30, 26, 5); T.pinta(g, '#FFFFFF', 4);
-    T.texto(g, '7', 5, -132, 20, { color: T.TINTA, w: 0 });
-    if (aire) { pierna(6, -80, 46, -104, 80, -78, false); brazo(8, -148, 44, -172, meta ? 40 : 62, meta ? -216 : -198, false); }
-    else { pierna(4, -80, 12 + s * 24, -46, s * 42, -Math.max(0, c2) * 28, false); brazo(8, -148, 8 - s * 26, -120, meta ? 44 : 8 - s * 40, meta ? -214 : -108 - Math.abs(s) * 8, false); }
-    g.translate(10, -198);
-    T.vol(g, c => T.circ(c, 0, 0, 38), C.piel, { sombra: C.pielS, dx: -7, dy: -8, w: 6 });
-    g.save(); T.circ(g, 0, 0, 38); g.clip();
-    g.fillStyle = C.pelo; g.fillRect(-40, -40, 80, 22); g.fillRect(-40, -40, 18, 54);
-    g.fillStyle = T.AMARILLO; g.fillRect(-40, -20, 80, 11);
+    // la lengüeta y el lazo, por detrás
+    T.vol(g, c => T.rr(c, -50, -172, 44, 52, 14), '#FFFFFF', { sombra: '#D9E1EA', dx: -6, dy: 0, w: 6 });
+    const lazo = Math.sin(t * 0.5) * 0.25;
+    for (const sg of [-1, 1]) { g.save(); g.translate(-8, -132); g.rotate(sg * (0.9 + lazo) - 0.3); T.vol(g, c => T.elip(c, 0, -22, 10, 22), '#FFFFFF', { sombra: '#D9E1EA', dx: -3, dy: 0, w: 5 }); g.restore(); }
+    T.vol(g, cuerpo, T.ROJO, { sombra: '#C92F47', dx: -10, dy: -8, w: 7 });
+    // puntera, talón y cordones
+    g.save(); cuerpo(g); g.clip();
+    T.circ(g, 98, -22, 50); T.pinta(g, '#FFFFFF', 6);
+    T.rr(g, -100, -124, 26, 100, 8); T.pinta(g, T.AMARILLO, 6);
     g.restore();
-    g.beginPath(); g.moveTo(-34, -20); g.lineTo(36, -20); g.moveTo(-36, -9); g.lineTo(37, -9); T.linea(g, 4);
-    T.circ(g, 0, 0, 38); T.linea(g, 6);
-    T.poli(g, [[-36, -16], [-58, -8 + Math.sin(t * 0.5) * 4], [-56, -22 + Math.sin(t * 0.5 + 1) * 4]]); T.pinta(g, T.AMARILLO, 4);
-    g.translate(7, 6); g.scale(0.56, 0.56);
-    P.cara(g, cae ? 'susto' : meta ? 'euforico' : aire ? 'contento' : 'tension', t, { ex: 19, ey: -4, by: 26, piel: C.piel, bigote: true, mira: { x: 0.7, y: 0 } });
+    g.beginPath(); for (const [x, yy] of [[2, -104], [22, -92], [42, -84]]) { g.moveTo(x - 9, yy + 10); g.lineTo(x + 9, yy - 12); } T.linea(g, 7, '#FFFFFF');
+    cuerpo(g); T.linea(g, 7);
+    // suela
+    T.vol(g, c => { c.beginPath(); c.moveTo(-96, -10); c.quadraticCurveTo(-98, -32, -82, -34); c.lineTo(88, -34); c.quadraticCurveTo(108, -30, 104, -10); c.quadraticCurveTo(100, 4, 80, 4); c.lineTo(-78, 4); c.quadraticCurveTo(-94, 4, -96, -10); c.closePath(); },
+      '#FFFFFF', { sombra: '#D9E1EA', dx: 0, dy: -9, w: 7 });
+    g.beginPath(); for (let i = 0; i < 6; i++) { g.moveTo(-70 + i * 30, 4); g.lineTo(-70 + i * 30, -6); } T.linea(g, 4, '#B9C6D2');
+    // la cara, bien grande en el costado
+    g.translate(-30, -82); g.scale(0.92, 0.92);
+    P.cara(g, cae ? 'susto' : e.enMeta ? 'euforico' : aire ? 'contento' : 'tension', t, { ex: 22, ey: -8, by: 20, piel: T.ROJO, mira: { x: 0.7, y: 0 } });
     g.restore();
   }
 
@@ -3997,15 +4014,15 @@
       if (x < -140 || x > 780) continue;
       const dt = n - o.llega;
       if (o.balon) {
-        if (o.estado === 2) balon(g, x - dt * 3, SUELO - 336 - dt * 9 + dt * dt * 0.3, t, true);
+        if (o.estado === 2) balon(g, x - dt * 3, SUELO - 240 - dt * 9 + dt * dt * 0.3, t, true);
         else {
-          balon(g, x, SUELO - 336 + Math.sin(t * 0.2 + o.llega) * 5, t, false);
+          balon(g, x, SUELO - 240 + Math.sin(t * 0.2 + o.llega) * 5, t, false);
           g.save(); g.globalAlpha = 0.2; T.elip(g, x, SUELO + 12, 24, 7); g.fillStyle = T.TINTA; g.fill(); g.restore();
         }
       } else if (x > RX) delante.push([x, o.estado === 2 ? Math.min(1, dt / 9) : 0]);
       else valla(g, x, N.alto, o.estado === 2 ? Math.min(1, dt / 9) : 0);
     }
-    corredor(g, e, vis);
+    zapatilla(g, e, vis);
     for (const v of delante) valla(g, v[0], N.alto, v[1]);
     if (hayMeta) {
       T.tubo(g, c => { c.beginPath(); c.moveTo(xm - 34, SUELO + 40); c.lineTo(xm - 34, SUELO - 236); }, T.PAPEL, 11, 5);
@@ -4017,9 +4034,9 @@
   function efectos(e, vis, ev, son) {
     for (const x of ev) {
       if (x.t === 'salta') { son && son.agarra(); }
-      else if (x.t === 'aterriza') T.polvo(vis.ch, RX - 6, SUELO + 4, 4, '#F6C9A0', 4, 11, 0);
+      else if (x.t === 'aterriza') { vis.aterriza = vis.t; T.polvo(vis.ch, RX - 30, SUELO + 4, 6, '#F6C9A0', 5, 12, 0); }
       else if (x.t === 'pasa') {
-        if (x.limpio) { T.estrellas(vis.ch, RX + 20, SUELO - 120, 5, T.AMARILLO, 8, 15, 1); son && son.golpe(); }
+        if (x.limpio) { T.estrellas(vis.ch, RX + 30, SUELO - 40, 5, T.AMARILLO, 8, 15, 1); son && son.golpe(); }
         if (x.racha % 5 === 0) { T.palabra(vis.ch, '¡' + x.racha + ' SEGUIDAS!', 330, 160, T.AMARILLO, 52, 1, true); son && son.acierto(); }
       } else if (x.t === 'tropieza') {
         vis.tropiezo = vis.t; vis.temblor = 10;
@@ -4028,7 +4045,7 @@
         son && son.fallo();
       } else if (x.t === 'balonazo') {
         vis.tropiezo = vis.t; vis.temblor = 12;
-        T.estrellas(vis.ch, RX + 10, SUELO - 330, 9, T.PAPEL, 10, 20, 1);
+        T.estrellas(vis.ch, RX + 10, SUELO - 236, 9, T.PAPEL, 10, 20, 1);
         T.palabra(vis.ch, '¡BALONAZO!', 330, 160, T.ROJO, 56, 1, true);
         son && son.pum();
       } else if (x.t === 'meta') {
@@ -4042,14 +4059,692 @@
   ZZ.canales.deportes = {
     id: 'deportes', num: 11, nombre: 'DEPORTES', orden: '¡SALTA!', hechoTxt: '¡META!',
     pista: 'Toca para saltar cada valla. Con balón, no saltes',
-    rotulo: 'EN DIRECTO: LOS 30 SEGUNDOS VALLAS',
+    rotulo: 'EN DIRECTO: LOS 15 SEGUNDOS VALLAS',
     color: C.pista, color2: C.grada, color3: T.AMARILLO,
-    pasos: TOTAL,      // treinta segundos
+    pasos: TOTAL,      // quince segundos
     animo: x => (x.t === 'tropieza' || x.t === 'balonazo' ? -1 : (x.t === 'pasa' && x.racha % 5 === 0) || x.t === 'meta' ? 1 : 0),
     init, paso, puntuacion, casa, dibuja, efectos,
   };
 })();
 //# sourceURL=zz/canales/deportes.js
+</script>
+<script>
+/* ZikZak · canal 12 · Terror · ¡QUIETO!
+   Dura diez segundos. Un fantasma de sábana cruza el salón del monstruo para llegar al tarro de galletas.
+   Con el dedo puesto, avanza de puntillas; al soltarlo, se queda quieto. El monstruo duerme, se revuelve
+   (deja de roncar: es el aviso) y abre el ojo: si te pilla andando, te manda un trecho atrás.
+   Mide los nervios: cuenta llegar, y llegar pronto. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ, T = ZZ.tinta, P = ZZ.personaje;
+
+  const TOTAL = 600;
+  const X0 = 74, X1 = 500, SUELO = 716;      // de dónde sale el fantasma, adónde llega y por dónde pisa
+  const PASO = 1 / 270;                      // lo que avanza cada paso con el dedo puesto
+  const GRACIA = 6;                          // pasos que perdona el monstruo al abrir el ojo
+  const NIV = [null,
+    { duerme: [70, 110], aviso: 30, mira: [34, 46], falsos: 0 },
+    { duerme: [54, 92], aviso: 22, mira: [38, 54], falsos: 0.3 },
+    { duerme: [40, 76], aviso: 16, mira: [40, 60], falsos: 0.45 }];
+  const C = { pared: '#6A48D7', paredS: '#5536B8', friso: '#3F2A8C', frisoS: '#2C1D66', suelo: '#C97B45', sueloS: '#8E4F2A',
+    bicho: '#8BD63A', bichoS: '#5FA51F', sillon: '#D3273E', sillonS: '#8E1630', noche: '#1B1447' };
+
+  // --- lógica ---------------------------------------------------------------
+  function init(semilla, nivel) {
+    const rng = ZZ.azar(semilla), N = NIV[nivel];
+    const seg = [];
+    let t = 0;
+    while (t < TOTAL + 80) {
+      const d = rng.entero(N.duerme[0], N.duerme[1]) + (seg.length ? 0 : 24);
+      seg.push({ t0: t, tipo: 'duerme', dur: d }); t += d;
+      if (rng() < N.falsos) {       // se revuelve y sigue durmiendo
+        seg.push({ t0: t, tipo: 'falso', dur: N.aviso + 10 }); t += N.aviso + 10;
+        const d2 = rng.entero(24, 50);
+        seg.push({ t0: t, tipo: 'duerme', dur: d2 }); t += d2;
+      }
+      seg.push({ t0: t, tipo: 'aviso', dur: N.aviso }); t += N.aviso;
+      const m = rng.entero(N.mira[0], N.mira[1]);
+      seg.push({ t0: t, tipo: 'mira', dur: m, pillo: false }); t += m;
+    }
+    return { semilla, nivel, seg, is: 0, dist: 0, pulsado: false, anda: false, aturdido: 0, pillados: 0, fin: -1, hecho: false, ev: [] };
+  }
+
+  function paso(e, entradas, n) {
+    while (e.is < e.seg.length - 1 && n >= e.seg[e.is].t0 + e.seg[e.is].dur) { e.is++; e.ev.push({ t: e.seg[e.is].tipo }); }
+    const s = e.seg[e.is];
+    for (const en of entradas) { if (en.t === 'd') e.pulsado = true; else if (en.t === 'u') e.pulsado = false; }
+    e.anda = false;
+    if (e.fin >= 0) { if (n >= e.fin + 44) e.hecho = true; return; }
+    if (!e.pulsado || n < e.aturdido) return;
+    const mirando = s.tipo === 'mira' && n - s.t0 >= GRACIA;
+    if (mirando) {
+      if (!s.pillo) { s.pillo = true; e.pillados++; e.dist = Math.max(0, e.dist - 0.2); e.aturdido = n + 36; e.ev.push({ t: 'pillado' }); }
+      return;
+    }
+    e.dist += PASO; e.anda = true;
+    if (e.dist >= 1) { e.dist = 1; e.fin = n; e.ev.push({ t: 'llega' }); }
+  }
+
+  function puntuacion(e) {
+    if (e.fin >= 0) return ZZ.lim(Math.round(1000 - (e.fin - 300) * 1.2), 650, 1000);
+    return Math.round(640 * e.dist);
+  }
+
+  // Jugador de la casa: anda mientras ronca y tarda más o menos en darse cuenta de que deja de roncar.
+  function casa(e, mem, rng, d, n) {
+    if (mem.is === undefined) { mem.is = -1; mem.pulsa = false; mem.meta = false; mem.cuando = 0; }
+    if (e.fin >= 0) { if (!mem.pulsa) return []; mem.pulsa = false; return [{ t: 'u', x: 320, y: 500 }]; }
+    if (mem.is !== e.is) {
+      mem.is = e.is;
+      const s = e.seg[e.is];
+      const reac = Math.max(1, Math.round(ZZ.mix(30, 7, d) + rng.campana() * ZZ.mix(9, 2, d)));
+      if (s.tipo === 'duerme') { mem.meta = true; mem.cuando = n + reac; }
+      else if (s.tipo === 'mira') { mem.cuando = mem.meta ? n : Math.max(mem.cuando, n); mem.meta = false; }
+      else { mem.meta = false; mem.cuando = n + reac; }
+    }
+    if (n >= mem.cuando && mem.pulsa !== mem.meta) { mem.pulsa = mem.meta; return [{ t: mem.meta ? 'd' : 'u', x: 320, y: 500 }]; }
+    return [];
+  }
+
+  // --- dibujo -----------------------------------------------------------------
+  function fondo(g) {
+    g.fillStyle = C.pared; g.fillRect(0, 0, ZZ.PW, ZZ.PH);
+    g.fillStyle = T.rayas(g, C.paredS, 34, 12); g.fillRect(0, 0, ZZ.PW, 470);
+    // ventana con luna
+    const vx = 520, vy = 112;
+    const hueco = c => T.rr(c, vx - 70, vy, 140, 196, 66);
+    T.sombra(g, hueco, 7, 9, 0.35);
+    hueco(g); T.pinta(g, C.noche, 9);
+    g.save(); hueco(g); g.clip();
+    T.circ(g, vx + 6, vy + 74, 40); T.pinta(g, '#FFE48A', 0);
+    T.circ(g, vx + 26, vy + 60, 34); T.pinta(g, C.noche, 0);
+    g.fillStyle = '#FFFFFF';
+    for (const [x, y, r] of [[vx - 36, vy + 46, 6], [vx + 40, vy + 130, 5], [vx - 20, vy + 150, 4]]) { T.estrella(g, x, y, r * 2, r * 0.8, 4); g.fill(); }
+    g.restore();
+    g.beginPath(); g.moveTo(vx, vy); g.lineTo(vx, vy + 196); g.moveTo(vx - 70, vy + 104); g.lineTo(vx + 70, vy + 104); T.linea(g, 7);
+    hueco(g); T.linea(g, 9);
+    // dos retratos de familia
+    for (const [x, y, col] of [[120, 250, '#FF9F1C'], [262, 150, T.MENTA]]) {
+      const marco = c => T.rr(c, x - 52, y - 62, 104, 124, 10);
+      T.sombra(g, marco, 7, 9, 0.35);
+      T.vol(g, marco, '#E2A93B', { sombra: '#B27A1E', dx: -6, dy: -7, w: 6 });
+      T.rr(g, x - 38, y - 48, 76, 96, 6); T.pinta(g, C.noche, 5);
+      g.save(); T.rr(g, x - 38, y - 48, 76, 96, 6); g.clip();
+      T.vol(g, c => T.elip(c, x, y + 22, 34, 44), col, { dx: -5, dy: -6, w: 5 });
+      T.poli(g, [[x - 30, y - 6], [x - 22, y - 36], [x - 10, y - 12]]); T.pinta(g, T.PAPEL, 4);
+      T.poli(g, [[x + 30, y - 6], [x + 22, y - 36], [x + 10, y - 12]]); T.pinta(g, T.PAPEL, 4);
+      g.restore();
+      T.circ(g, x, y + 8, 13); T.pinta(g, '#FFFFFF', 4); T.circ(g, x + 3, y + 10, 5); T.pinta(g, T.TINTA, 0);
+      g.beginPath(); g.moveTo(x - 12, y + 34); g.lineTo(x - 6, y + 40); g.lineTo(x, y + 34); g.lineTo(x + 6, y + 40); g.lineTo(x + 12, y + 34); T.linea(g, 4);
+    }
+    // friso y suelo de tablas
+    T.vol(g, c => T.rr(c, -20, 462, 680, 200, 0), C.friso, { sombra: C.frisoS, dx: 0, dy: 22, w: 7 });
+    g.fillStyle = T.trama(g, C.frisoS, 14, 2.8); g.fillRect(0, 560, ZZ.PW, 90);
+    T.vol(g, c => T.rr(c, -20, 648, 680, 230, 0), C.suelo, { sombra: C.sueloS, dx: 0, dy: 24, w: 7 });
+    g.beginPath();
+    for (const y of [712, 776]) { g.moveTo(0, y); g.lineTo(ZZ.PW, y); }
+    for (const [x, y0] of [[120, 672], [380, 672], [250, 712], [520, 712], [90, 776], [430, 776]]) { g.moveTo(x, y0); g.lineTo(x, y0 + (y0 === 672 ? 40 : 64)); }
+    T.linea(g, 4, C.sueloS);
+    // la alfombra
+    T.vol(g, c => T.elip(c, 300, 764, 250, 40), T.ROJO, { sombra: '#C92F47', dx: 0, dy: -8, w: 6 });
+    T.elip(g, 300, 762, 200, 26); T.linea(g, 5, T.AMARILLO);
+    // la mesita y el tarro de galletas
+    T.vol(g, c => T.rr(c, 536, 600, 112, 22, 8), '#E8A968', { sombra: C.suelo, dx: 0, dy: -7, w: 6 });
+    T.tubo(g, c => { c.beginPath(); c.moveTo(560, 622); c.lineTo(552, 716); }, '#E8A968', 10, 5);
+    T.tubo(g, c => { c.beginPath(); c.moveTo(624, 622); c.lineTo(632, 716); }, '#E8A968', 10, 5);
+    const tarro = c => T.rr(c, 550, 504, 86, 98, 26);
+    T.vol(g, tarro, '#BFE6FA', { sombra: '#8FC3DE', dx: -8, dy: 0, w: 7 });
+    for (const [x, y] of [[572, 572], [606, 566], [588, 544], [614, 540]]) { T.circ(g, x, y, 15); T.pinta(g, '#D99A5B', 4); T.circ(g, x - 4, y - 3, 3); T.pinta(g, '#7A4220', 0); T.circ(g, x + 5, y + 4, 3); T.pinta(g, '#7A4220', 0); }
+    tarro(g); T.linea(g, 7);
+    T.vol(g, c => T.rr(c, 558, 486, 70, 24, 10), T.ROJO, { dx: 0, dy: -7, w: 6 });
+  }
+
+  // El monstruo en su sillón. ojo: 0 cerrado, 0,5 entreabierto, 1 abierto.
+  function monstruo(g, ojo, t, miraX, ronca) {
+    const resp = ronca ? Math.sin(t * 0.09) : 0;
+    // el sillón, por detrás
+    T.vol(g, c => T.rr(c, 150, 300, 340, 370, 60), C.sillon, { sombra: C.sillonS, dx: -16, dy: 0, w: 8 });
+    for (const [x, y] of [[230, 370], [320, 350], [410, 370], [276, 430], [364, 430]]) { T.circ(g, x, y, 7); T.pinta(g, C.sillonS, 0); }
+    // cuernos y cuerpo
+    for (const sg of [-1, 1]) { T.vol(g, c => T.poli(c, [[320 + sg * 62, 430], [320 + sg * 124, 362], [320 + sg * 104, 452]]), T.PAPEL, { sombra: '#D9CDB3', dx: 0, dy: -6, w: 6 }); }
+    T.vol(g, c => T.elip(c, 320, 546 - resp * 4, 146, 130 + resp * 5), C.bicho, { sombra: C.bichoS, dx: -14, dy: -12, w: 8 });
+    g.beginPath();
+    for (const [x, y] of [[214, 596], [246, 632], [392, 634], [424, 598], [300, 652], [344, 650]]) { g.moveTo(x - 8, y); g.lineTo(x, y + 14); g.lineTo(x + 8, y); }
+    T.linea(g, 5, C.bichoS);
+    // el ojo
+    const ex = 320, ey = 500 - resp * 4;
+    if (ojo < 0.2) {
+      g.beginPath(); g.moveTo(ex - 58, ey); g.quadraticCurveTo(ex, ey + 40, ex + 58, ey); T.linea(g, 9);
+      g.beginPath(); for (const dx of [-36, 0, 36]) { g.moveTo(ex + dx, ey + 22 - Math.abs(dx) * 0.3); g.lineTo(ex + dx * 1.15, ey + 40 - Math.abs(dx) * 0.3); } T.linea(g, 6);
+    } else {
+      T.elip(g, ex, ey, 62, 54); T.pinta(g, '#FFFFFF', 8);
+      const px = ex + ZZ.lim(miraX, -1, 1) * 26, py = ey + 18;
+      T.circ(g, px, py, 28); T.pinta(g, ojo >= 1 ? T.ROJO : '#FF9F1C', 6);
+      T.circ(g, px, py, 13); T.pinta(g, T.TINTA, 0);
+      T.circ(g, px - 9, py - 9, 6); T.pinta(g, '#FFFFFF', 0);
+      if (ojo < 1) { g.save(); T.elip(g, ex, ey, 62, 54); g.clip(); g.fillStyle = C.bicho; g.fillRect(ex - 70, ey - 60, 140, 62); g.restore(); g.beginPath(); g.moveTo(ex - 60, ey + 2); g.lineTo(ex + 60, ey + 2); T.linea(g, 8); T.elip(g, ex, ey, 62, 54); T.linea(g, 8); }
+    }
+    // la boca
+    if (ojo >= 1) {
+      T.rr(g, 262, 584, 116, 40, 16); T.pinta(g, '#3B1522', 7);
+      g.fillStyle = '#FFFFFF'; for (let i = 0; i < 5; i++) { T.poli(g, [[270 + i * 22, 586], [292 + i * 22, 586], [281 + i * 22, 606]]); g.fill(); }
+      T.rr(g, 262, 584, 116, 40, 16); T.linea(g, 7);
+    } else {
+      T.elip(g, 320, 600, 30 + resp * 8, 18 + resp * 12); T.pinta(g, '#3B1522', 7);
+      T.poli(g, [[300, 588], [312, 588], [306, 602]]); T.pinta(g, '#FFFFFF', 3);
+      T.poli(g, [[328, 588], [340, 588], [334, 602]]); T.pinta(g, '#FFFFFF', 3);
+    }
+    // los brazos del sillón, por delante
+    for (const sg of [-1, 1]) {
+      T.vol(g, c => T.rr(c, 320 + sg * 196 - 44, 536, 88, 150, 34), C.sillon, { sombra: C.sillonS, dx: -10, dy: 0, w: 8 });
+      T.vol(g, c => T.elip(c, 320 + sg * 176, 548, 36, 26), C.bicho, { sombra: C.bichoS, dx: -5, dy: -5, w: 7 });
+    }
+  }
+
+  function fantasma(g, x, e, vis) {
+    const t = vis.t, susto = vis.pillado !== undefined && t - vis.pillado < 32;
+    const k = susto ? (t - vis.pillado) / 32 : 0;
+    const bote = e.anda ? Math.abs(Math.sin(t * 0.36)) * 9 : 0;
+    g.save(); g.globalAlpha = 0.28; T.elip(g, x + 4, SUELO + 6, 50, 11); g.fillStyle = T.TINTA; g.fill(); g.restore();
+    g.save(); g.translate(x, SUELO - bote - Math.sin(k * Math.PI) * 76); g.rotate(susto ? -Math.sin(k * Math.PI) * 0.3 : e.anda ? 0.06 : 0);
+    for (const sg of [-1, 1]) {
+      const dy = e.anda ? Math.max(0, Math.sin(t * 0.36 + (sg > 0 ? 0 : Math.PI))) * 12 : 0;
+      T.vol(g, c => T.rr(c, sg * 18 - 16, -16 - dy, 36, 20, 9), T.ROJO, { dx: 0, dy: -5, w: 5 });
+    }
+    const cam = c => {
+      c.beginPath(); c.moveTo(-52, -14); c.lineTo(-52, -104); c.quadraticCurveTo(-52, -170, 0, -170); c.quadraticCurveTo(52, -170, 52, -104); c.lineTo(52, -14);
+      c.quadraticCurveTo(39, -30, 26, -14); c.quadraticCurveTo(13, -30, 0, -14); c.quadraticCurveTo(-13, -30, -26, -14); c.quadraticCurveTo(-39, -30, -52, -14); c.closePath();
+    };
+    T.vol(g, cam, '#FFFFFF', { sombra: '#C9D6F5', dx: -9, dy: -6, w: 7 });
+    const quieto = !e.anda && !susto && e.fin < 0, feliz = e.fin >= 0;
+    for (const sg of [-1, 1]) {
+      if (feliz) { g.beginPath(); g.moveTo(sg * 20 - 12, -112); g.quadraticCurveTo(sg * 20, -128, sg * 20 + 12, -112); T.linea(g, 7); }
+      else { T.elip(g, sg * 20 + (quieto ? -5 : 4), -114 + (quieto ? -4 : 0), 12, susto ? 22 : 16); T.pinta(g, T.TINTA, 0); T.circ(g, sg * 20 + (quieto ? -8 : 1), -120, 4); T.pinta(g, '#FFFFFF', 0); }
+    }
+    if (susto) { T.elip(g, 0, -78, 12, 16); T.pinta(g, T.TINTA, 0); }
+    else if (feliz) { g.beginPath(); g.moveTo(-14, -90); g.quadraticCurveTo(0, -72, 14, -90); T.linea(g, 6); }
+    else if (quieto) { T.poli(g, [[40, -150], [34, -134], [46, -134]]); T.pinta(g, '#8FD3F4', 4); }
+    g.restore();
+  }
+
+  const estado = (e, n) => { const s = e.seg[e.is]; return s.tipo === 'mira' ? 1 : (s.tipo === 'aviso' || s.tipo === 'falso') ? 0.5 : 0; };
+
+  function dibuja(g, e, vis) {
+    const n = vis.n, t = vis.t, ojo = estado(e, n), x = X0 + (X1 - X0) * e.dist;
+    T.capa(g, vis, 'terror', fondo);
+    monstruo(g, ojo, t, (x - 320) / 220, ojo === 0);
+    if (ojo >= 1) {      // lo que ve cuando abre el ojo
+      g.save(); g.globalAlpha = 0.22 + Math.sin(t * 0.6) * 0.04; T.poli(g, [[300, 500], [340, 500], [660, 760], [-20, 760]]); g.fillStyle = '#FFE48A'; g.fill(); g.restore();
+    } else if (ojo === 0) {  // ronca
+      for (let i = 0; i < 3; i++) {
+        const k = ((t * 0.012) + i / 3) % 1;
+        T.texto(g, 'Z', 420 + k * 70, 420 - k * 150, 24 + k * 30, { color: T.PAPEL, w: 6, rot: Math.sin(k * 6) * 0.2 });
+      }
+    }
+    if (e.fin < 0) T.marca(g, 592, 458 + Math.sin(t * 0.22) * 5, 0, 34);
+    vis.ch.dibuja(g, 0);
+    fantasma(g, x, e, vis);
+    vis.ch.dibuja(g, 1);
+  }
+
+  function efectos(e, vis, ev, son) {
+    if (e.anda && vis.t % 9 === 0) T.polvo(vis.ch, X0 + (X1 - X0) * e.dist - 20, SUELO + 2, 1, '#F3C58E', 2, 8, 0);
+    for (const x of ev) {
+      if (x.t === 'aviso' || x.t === 'falso') { T.palabra(vis.ch, '¿EH?', 320, 250, T.PAPEL, 56, 1, true); son && son.golpe(); }
+      else if (x.t === 'mira') { vis.temblor = 6; son && son.orden(); }
+      else if (x.t === 'pillado') {
+        vis.pillado = vis.t; vis.temblor = 14;
+        T.estrellas(vis.ch, X0 + (X1 - X0) * e.dist, SUELO - 120, 8, T.PAPEL, 11, 18, 1);
+        T.palabra(vis.ch, '¡TE VIO!', 320, 250, T.ROJO, 62, 1, true);
+        son && son.pum();
+      } else if (x.t === 'llega') {
+        T.confeti(vis.ch, 560, 480, 30, [T.AMARILLO, T.ROJO, T.MENTA, T.PAPEL], 12, 1);
+        T.palabra(vis.ch, e.pillados ? '¡GALLETAS!' : '¡NI SE ENTERA!', 320, 250, T.AMARILLO, 56, 1, true);
+        son && son.sol();
+      }
+    }
+  }
+
+  ZZ.canales.terror = {
+    id: 'terror', num: 12, nombre: 'TERROR', orden: '¡QUIETO!', hechoTxt: '¡ÑAM!',
+    pista: 'Mantén para andar. Suelta si abre el ojo',
+    rotulo: 'SESIÓN GOLFA: «EL TARRO DE GALLETAS»',
+    color: C.pared, color2: C.bicho, color3: T.AMARILLO,
+    arrastra: true,
+    pasos: TOTAL,      // diez segundos
+    animo: x => (x.t === 'pillado' ? -1 : x.t === 'llega' ? 1 : 0),
+    init, paso, puntuacion, casa, dibuja, efectos,
+  };
+})();
+//# sourceURL=zz/canales/terror.js
+</script>
+<script>
+/* ZikZak · canal 13 · Dibujos · ¡ESQUIVA!
+   Dura diez segundos. Desde las ventanas caen cosas sobre un huevo. En cada tanda caen dos, una siempre
+   encima de él: solo queda un sitio libre y hay que llegar. Se toca a la izquierda o a la derecha
+   de la pantalla para dar un salto a ese lado.
+   Mide los reflejos: cuenta salvarse y, además, lo pronto que se llega al sitio libre. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ, T = ZZ.tinta, P = ZZ.personaje;
+
+  const TOTAL = 600;
+  const XS = [130, 320, 510], SUELO = 694, VENTANA = 190;
+  const NIV = [null,
+    { cada: 76, cae: 62, n: 7 },
+    { cada: 58, cae: 48, n: 9 },
+    { cada: 46, cae: 38, n: 12 }];
+  const C = { muro: '#F6A7D5', muroS: '#E57FBC', acera: '#E9E2D0', aceraS: '#C9BFA6', calle: '#4A3B8F', calleS: '#35296B',
+    huevo: '#FFF4DC', huevoS: '#EAD9B0' };
+
+  // --- lógica ---------------------------------------------------------------
+  function init(semilla, nivel) {
+    const rng = ZZ.azar(semilla), N = NIV[nivel];
+    const plan = [];
+    for (let k = 0; k < N.n; k++) plan.push({ s: 40 + k * N.cada, lado: rng.entero(0, 1), tipos: [rng.entero(0, 2), rng.entero(0, 2)] });
+    return { semilla, nivel, plan, cae: N.cae, io: 0, ola: null, carril: 1, de: 1, cambio: -99, aturdido: 0, suma: 0, golpes: 0, hecho: false, ev: [] };
+  }
+
+  function paso(e, entradas, n) {
+    for (const en of entradas) {
+      if (en.t !== 'd' || n < e.aturdido) continue;
+      const a = ZZ.lim(e.carril + (en.x < ZZ.PW / 2 ? -1 : 1), 0, 2);
+      if (a === e.carril) continue;
+      e.de = e.carril; e.carril = a; e.cambio = n;
+      e.ev.push({ t: 'salta' });
+    }
+    // empieza una tanda: una cosa cae donde está el huevo y otra en uno de los dos sitios que quedan
+    if (e.io < e.plan.length && n === e.plan[e.io].s) {
+      const p = e.plan[e.io], otros = [0, 1, 2].filter(c => c !== e.carril);
+      e.ola = { k: e.io, s: n, peligro: [e.carril, otros[p.lado]], libre: otros[1 - p.lado], tipos: p.tipos, estado: 0 };
+      e.io++;
+      e.ev.push({ t: 'cae' });
+    }
+    const o = e.ola;
+    if (o && o.estado === 0 && n === o.s + e.cae) {
+      if (e.carril === o.libre) {
+        const pronto = 1 - ZZ.lim((e.cambio - o.s) / e.cae, 0, 1);
+        o.estado = 1; o.pts = 60 + Math.round(40 * pronto); e.suma += o.pts;
+        e.ev.push({ t: 'salva', pts: o.pts, pronto: pronto > 0.6 });
+      } else {
+        o.estado = 2; e.golpes++; e.aturdido = n + 16;
+        e.ev.push({ t: 'golpe' });
+      }
+      if (e.io >= e.plan.length) e.fin = n;
+    }
+    if (e.fin !== undefined && n >= e.fin + 14) e.hecho = true;
+  }
+
+  function puntuacion(e) { return ZZ.lim(Math.round(e.suma * 10 / e.plan.length), 0, 1000); }
+
+  // Jugador de la casa: tarda en ver por dónde cae y, si es flojo, a veces se va al sitio malo.
+  function casa(e, mem, rng, d, n) {
+    const o = e.ola;
+    if (!o || o.estado !== 0) return [];
+    if (mem.k !== o.k) {
+      mem.k = o.k; mem.ult = -9;
+      mem.meta = rng() < ZZ.mix(0.28, 0, d) ? o.peligro[1] : o.libre;
+      mem.desde = n + Math.round(ZZ.mix(30, 7, d) + Math.abs(rng.campana()) * ZZ.mix(8, 2, d));
+    }
+    if (n >= mem.desde && e.carril !== mem.meta && n - mem.ult >= 5 && n >= e.aturdido) {
+      mem.ult = n;
+      return [{ t: 'd', x: mem.meta < e.carril ? 100 : 540, y: 500 }];
+    }
+    return [];
+  }
+
+  // --- dibujo -----------------------------------------------------------------
+  function fondo(g) {
+    // la fachada
+    g.fillStyle = C.muro; g.fillRect(0, 0, ZZ.PW, ZZ.PH);
+    g.fillStyle = T.trama(g, C.muroS, 15, 3); g.fillRect(0, 300, ZZ.PW, 160);
+    g.beginPath();
+    for (const [x, y] of [[40, 380], [210, 430], [420, 350], [560, 440], [90, 520], [470, 540]]) { g.moveTo(x, y); g.lineTo(x + 46, y); g.moveTo(x + 14, y + 16); g.lineTo(x + 60, y + 16); }
+    T.linea(g, 4, C.muroS);
+    // tres ventanas, una encima de cada sitio
+    for (const x of XS) {
+      const hueco = c => T.rr(c, x - 62, 96, 124, 150, 12);
+      T.sombra(g, hueco, 6, 8, 0.3);
+      hueco(g); T.pinta(g, '#2B2536', 8);
+      g.save(); hueco(g); g.clip(); g.fillStyle = T.trama(g, '#463E62', 13, 2.8); g.fillRect(x - 62, 96, 124, 150); g.restore();
+      hueco(g); T.linea(g, 8);
+      for (const sg of [-1, 1]) T.vol(g, c => T.rr(c, x + sg * 84 - 22, 92, 44, 158, 8), T.MENTA, { sombra: T.oscuro(T.MENTA, 0.25), dx: -6, dy: 0, w: 6 });
+      T.vol(g, c => T.rr(c, x - 78, 240, 156, 26, 8), T.PAPEL, { sombra: '#D9CDB3', dx: 0, dy: -8, w: 6 });
+    }
+    // toldo de la tienda
+    T.vol(g, c => T.rr(c, -20, 592, 680, 34, 0), C.muroS, { sombra: '#C95F9E', dx: 0, dy: -10, w: 6 });
+    // acera y calle
+    T.vol(g, c => T.rr(c, -20, 640, 680, 110, 0), C.acera, { sombra: C.aceraS, dx: 0, dy: -14, w: 7 });
+    g.beginPath(); for (const x of [110, 225, 415, 530]) { g.moveTo(x, 656); g.lineTo(x - 14, 736); } T.linea(g, 4, C.aceraS);
+    T.vol(g, c => T.rr(c, -20, 744, 680, 130, 0), C.calle, { sombra: C.calleS, dx: 0, dy: 22, w: 7 });
+    g.fillStyle = T.trama(g, C.calleS, 14, 2.6); g.fillRect(0, 790, ZZ.PW, 50);
+    g.fillStyle = T.AMARILLO; for (const x of [30, 250, 470]) { T.rr(g, x, 802, 130, 14, 7); g.fill(); }
+    // boca de riego
+    T.vol(g, c => T.rr(c, 580, 668, 44, 64, 12), T.ROJO, { dx: -8, dy: 0, w: 6 });
+    T.vol(g, c => T.rr(c, 572, 656, 60, 20, 10), T.ROJO, { dx: 0, dy: -6, w: 6 });
+    T.circ(g, 602, 702, 9); T.pinta(g, T.AMARILLO, 5);
+  }
+
+  // Las cosas que caen, centradas en el origen. Cada una con su cara.
+  function cosa(g, tipo, t) {
+    if (tipo === 0) {            // yunque
+      const cam = c => { c.beginPath(); c.moveTo(-66, -40); c.lineTo(66, -40); c.lineTo(40, -8); c.lineTo(30, -8); c.lineTo(30, 16); c.lineTo(58, 44); c.lineTo(-58, 44); c.lineTo(-30, 16); c.lineTo(-30, -8); c.lineTo(-90, -18); c.closePath(); };
+      T.vol(g, cam, '#6B7896', { sombra: '#3A4460', dx: -9, dy: -7, w: 7 });
+      g.save(); g.translate(0, -14); g.scale(0.62, 0.62); P.cara(g, 'enfadado', t, { ex: 22, ey: -10, by: 18, piel: '#6B7896' }); g.restore();
+    } else if (tipo === 1) {     // piano
+      T.vol(g, c => T.rr(c, -66, -54, 132, 104, 12), '#8A4FD0', { sombra: '#5E2FA0', dx: -9, dy: -7, w: 7 });
+      T.rr(g, -54, 10, 108, 30, 6); T.pinta(g, '#FFFFFF', 5);
+      g.beginPath(); for (let i = 1; i < 7; i++) { g.moveTo(-54 + i * 15.4, 10); g.lineTo(-54 + i * 15.4, 40); } T.linea(g, 4);
+      g.fillStyle = T.TINTA; for (const i of [1, 2, 4, 5, 6]) g.fillRect(-54 + i * 15.4 - 4, 10, 8, 17);
+      for (const sg of [-1, 1]) { T.circ(g, sg * 24, -22, 15); T.pinta(g, '#FFFFFF', 5); T.circ(g, sg * 24 + 3, -19, 6); T.pinta(g, T.TINTA, 0); }
+    } else {                     // maceta
+      g.beginPath(); g.moveTo(0, -30); g.lineTo(0, -66); T.linea(g, 8, '#2C9A55');
+      for (let i = 0; i < 6; i++) { const a = i * 1.047 + t * 0.03; T.circ(g, Math.cos(a) * 20, -78 + Math.sin(a) * 20, 13); T.pinta(g, T.AMARILLO, 5); }
+      T.circ(g, 0, -78, 12); T.pinta(g, T.ROJO, 5);
+      T.vol(g, c => T.poli(c, [[-52, -24], [52, -24], [38, 46], [-38, 46]]), '#E0623A', { sombra: '#B94A27', dx: -8, dy: 0, w: 7 });
+      T.vol(g, c => T.rr(c, -60, -36, 120, 22, 8), '#E0623A', { sombra: '#B94A27', dx: 0, dy: -6, w: 7 });
+      g.save(); g.translate(0, 10); g.scale(0.56, 0.56); P.cara(g, 'contento', t, { ex: 22, ey: -8, by: 20, piel: '#E0623A' }); g.restore();
+    }
+  }
+
+  function huevo(g, e, vis) {
+    const n = vis.n, t = vis.t, o = e.ola;
+    const k = ZZ.lim((n - e.cambio) / 8, 0, 1), x = XS[e.de] + (XS[e.carril] - XS[e.de]) * ZZ.e.io(k);
+    const salto = k < 1 ? Math.sin(k * Math.PI) * 46 : 0;
+    const plaf = n < e.aturdido, kp = plaf ? 1 - (e.aturdido - n) / 16 : 1;
+    const enPeligro = o && o.estado === 0 && o.peligro.indexOf(e.carril) >= 0;
+    g.save(); g.globalAlpha = 0.26; T.elip(g, x + 4, SUELO + 8, 58 - salto * 0.3, 13); g.fillStyle = T.TINTA; g.fill(); g.restore();
+    g.save(); g.translate(x, SUELO - salto + (enPeligro ? Math.sin(t * 1.2) * 2 : 0));
+    g.rotate(k < 1 ? (e.carril > e.de ? 1 : -1) * Math.sin(k * Math.PI) * 0.22 : 0);
+    g.scale(plaf ? 1 + 0.3 * (1 - kp) : 1, plaf ? 0.6 + 0.4 * kp : 1 + (k < 1 ? Math.sin(k * Math.PI) * 0.08 : Math.sin(t * 0.1) * 0.015));
+    for (const sg of [-1, 1]) T.vol(g, c => T.elip(c, sg * 22, -6, 20, 11), '#FF9F1C', { sombra: '#D97A0A', dx: 0, dy: -4, w: 5 });
+    const cam = c => { c.beginPath(); c.moveTo(0, -150); c.bezierCurveTo(48, -150, 62, -78, 62, -56); c.bezierCurveTo(62, -24, 36, -8, 0, -8); c.bezierCurveTo(-36, -8, -62, -24, -62, -56); c.bezierCurveTo(-62, -78, -48, -150, 0, -150); c.closePath(); };
+    T.vol(g, cam, C.huevo, { sombra: C.huevoS, dx: -10, dy: -8, w: 7 });
+    // las grietas que lleva
+    g.beginPath();
+    if (e.golpes > 0) { g.moveTo(-10, -148); g.lineTo(2, -128); g.lineTo(-12, -116); g.lineTo(-2, -102); }
+    if (e.golpes > 1) { g.moveTo(52, -90); g.lineTo(34, -84); g.lineTo(42, -70); g.lineTo(26, -64); }
+    if (e.golpes > 2) { g.moveTo(-56, -78); g.lineTo(-40, -70); g.lineTo(-48, -56); g.lineTo(-32, -48); }
+    if (e.golpes > 0) T.linea(g, 5);
+    g.translate(0, -62); g.scale(0.86, 0.86);
+    P.cara(g, plaf ? 'triste' : enPeligro ? 'susto' : o && o.estado === 0 ? 'contento' : 'neutro', t, { ex: 22, ey: -8, by: 20, piel: C.huevo });
+    g.restore();
+    // antes del primer salto: a qué lados se toca
+    if (e.cambio < 0) for (const sg of [-1, 1]) T.marca(g, x + sg * (104 + Math.sin(t * 0.22) * 6), SUELO - 70, -sg * Math.PI / 2, 34);
+  }
+
+  function dibuja(g, e, vis) {
+    const n = vis.n, t = vis.t, o = e.ola;
+    T.capa(g, vis, 'dibujos', fondo);
+    const u = o ? ZZ.lim((n - o.s) / e.cae, 0, 1) : 0;
+    // las sombras avisan de dónde va a caer
+    if (o && o.estado === 0) for (const c of o.peligro) {
+      g.save(); g.globalAlpha = 0.2 + u * 0.35; T.elip(g, XS[c], SUELO + 8, 30 + u * 52, 8 + u * 12); g.fillStyle = T.TINTA; g.fill(); g.restore();
+    }
+    vis.ch.dibuja(g, 0);
+    huevo(g, e, vis);
+    if (o) for (let i = 0; i < 2; i++) {
+      const x = XS[o.peligro[i]];
+      let y, rot = 0, aplasta = 1;
+      if (o.estado === 0) { y = VENTANA + (SUELO - 46 - VENTANA) * u * u; rot = Math.sin(t * 0.3 + i * 2) * 0.12; }
+      else { const dt = n - o.s - e.cae; if (dt > 26) continue; y = SUELO - 46 - Math.abs(Math.sin(Math.min(dt, 14) / 14 * Math.PI)) * 16 * (dt < 14 ? 1 : 0); aplasta = dt < 5 ? 0.8 : 1; g.globalAlpha = dt > 18 ? 1 - (dt - 18) / 8 : 1; }
+      g.save(); g.translate(x, y + (1 - aplasta) * 40); g.rotate(rot); g.scale(1 + (1 - aplasta) * 0.3, aplasta);
+      cosa(g, o.tipos[i], t);
+      g.restore(); g.globalAlpha = 1;
+    }
+    vis.ch.dibuja(g, 1);
+  }
+
+  function efectos(e, vis, ev, son) {
+    for (const x of ev) {
+      if (x.t === 'salta') { son && son.agarra(); }
+      else if (x.t === 'cae') { son && son.tic(); }
+      else if (x.t === 'salva' || x.t === 'golpe') {
+        for (const c of e.ola.peligro) T.polvo(vis.ch, XS[c], SUELO, 7, '#FFFFFF', 7, 16, 0);
+        vis.temblor = x.t === 'golpe' ? 14 : 7;
+        if (x.t === 'golpe') {
+          T.estrellas(vis.ch, XS[e.carril], SUELO - 120, 9, T.AMARILLO, 11, 20, 1);
+          T.palabra(vis.ch, '¡PLAF!', 320, 420, T.ROJO, 66, 1, true);
+          son && son.pum();
+        } else {
+          T.palabra(vis.ch, x.pronto ? '¡REFLEJOS!' : '¡UF!', 320, 420, x.pronto ? T.AMARILLO : T.PAPEL, x.pronto ? 54 : 62, 1, true);
+          son && (x.pronto ? son.acierto() : son.golpe());
+        }
+      }
+    }
+  }
+
+  ZZ.canales.dibujos = {
+    id: 'dibujos', num: 13, nombre: 'DIBUJOS', orden: '¡ESQUIVA!', hechoTxt: '¡ENTERO!',
+    pista: 'Toca a un lado o a otro para saltar ahí',
+    rotulo: 'HOY: «UN HUEVO CON MUCHA SUERTE»',
+    color: '#E57FBC', color2: T.MENTA, color3: T.AMARILLO,
+    pasos: TOTAL,      // diez segundos
+    animo: x => (x.t === 'golpe' ? -1 : x.t === 'salva' ? 1 : 0),
+    init, paso, puntuacion, casa, dibuja, efectos,
+  };
+})();
+//# sourceURL=zz/canales/dibujos.js
+</script>
+<script>
+/* ZikZak · canal 14 · Buenas noches · ¿CUÁNTAS?
+   Dura diez segundos. Las ovejas saltan la valla y hay que contarlas. Luego salen tres números y se toca el bueno.
+   En los niveles altos van más juntas y se cuelan lobos con disfraz de oveja, que no cuentan.
+   Mide la atención: acertar es casi todo y contestar pronto da el resto. Quedarse a una da algo. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ, T = ZZ.tinta, P = ZZ.personaje;
+
+  const TOTAL = 600, CRUZA = 58, RESP = 170, FINAL = 60;
+  const PRADO = 612;                       // por dónde pisan
+  const OPX = [130, 320, 510], OPY = 290;  // dónde salen los tres números
+  const NIV = [null,
+    { n: [4, 6], hueco: [40, 58], lobos: [0, 0] },
+    { n: [6, 9], hueco: [22, 42], lobos: [1, 2] },
+    { n: [8, 12], hueco: [14, 30], lobos: [2, 3] }];
+  const C = { cielo: '#2B3A8C', cieloS: '#1C2766', monte: '#1D7A62', monteS: '#145848', prado: '#3DBB6B', pradoS: '#2C9A55',
+    lana: '#FFFFFF', lanaS: '#C9D6F5', cara: '#FFE9C7', lobo: '#8E889F', loboS: '#5A5470', colcha: '#D3273E', colchaS: '#8E1630' };
+
+  // --- lógica ---------------------------------------------------------------
+  function init(semilla, nivel) {
+    const rng = ZZ.azar(semilla), N = NIV[nivel];
+    const ovejas = rng.entero(N.n[0], N.n[1]), lobos = rng.entero(N.lobos[0], N.lobos[1]), m = ovejas + lobos;
+    const esLobo = [];
+    for (let k = 0, q = lobos; k < 200 && q > 0; k++) { const i = rng.entero(1, m - 1); if (!esLobo[i]) { esLobo[i] = true; q--; } }
+    let sale = [30];
+    for (let i = 1; i < m; i++) sale.push(sale[i - 1] + rng.entero(N.hueco[0], N.hueco[1]));
+    const ult = sale[m - 1];
+    if (ult > 320) sale = sale.map(a => Math.round(30 + (a - 30) * 290 / (ult - 30)));
+    const bichos = sale.map((s, i) => ({ s, lobo: !!esLobo[i], fila: rng.entero(0, 2) }));
+    // tres números: el bueno, el de quien cuenta también los lobos y otro cercano
+    const ops = [ovejas];
+    if (lobos > 0) ops.push(ovejas + lobos);
+    const cerca = [ovejas - 1, ovejas + 1, ovejas - 2, ovejas + 2].filter(v => v >= 1 && ops.indexOf(v) < 0);
+    while (ops.length < 3) ops.push(cerca.splice(rng.entero(0, Math.min(1, cerca.length - 1)), 1)[0]);
+    for (let i = 2; i > 0; i--) { const j = rng.entero(0, i), x = ops[i]; ops[i] = ops[j]; ops[j] = x; }
+    return { semilla, nivel, bichos, ovejas, ops, e0: sale[m - 1] + CRUZA + 14, elegido: -2, pasoEleccion: -1, fin: -1, hecho: false, ev: [] };
+  }
+
+  function paso(e, entradas, n) {
+    for (const b of e.bichos) if (b.s === n) e.ev.push({ t: 'sale', lobo: b.lobo });
+    if (n === e.e0) e.ev.push({ t: 'pregunta' });
+    if (e.elegido === -2 && n >= e.e0) {
+      for (const en of entradas) {
+        if (en.t !== 'd' || Math.abs(en.y - OPY) > 130) continue;
+        let j = -1, mejor = 100;
+        for (let i = 0; i < 3; i++) { const d = Math.abs(OPX[i] - en.x); if (d < mejor) { mejor = d; j = i; } }
+        if (j < 0) continue;
+        e.elegido = j; e.pasoEleccion = n; e.fin = n + FINAL;
+        const dif = Math.abs(e.ops[j] - e.ovejas);
+        e.ev.push({ t: dif === 0 ? 'acierto' : 'fallo', j, casi: dif === 1 });
+        break;
+      }
+      if (e.elegido === -2 && n >= e.e0 + RESP) { e.elegido = -1; e.pasoEleccion = n; e.fin = n + FINAL; e.ev.push({ t: 'tarde' }); }
+    }
+    if (e.fin >= 0 && n >= e.fin) e.hecho = true;
+  }
+
+  function puntuacion(e) {
+    if (e.elegido < 0) return 0;
+    const dif = Math.abs(e.ops[e.elegido] - e.ovejas);
+    if (dif === 0) return Math.round(650 + 350 * ZZ.lim(1 - (e.pasoEleccion - e.e0) / RESP, 0, 1));
+    return dif === 1 ? 250 : 0;
+  }
+
+  // Jugador de la casa: cuenta bien o se le va una, y tarda más o menos en contestar.
+  function casa(e, mem, rng, d, n) {
+    if (mem.paso === undefined) {
+      const p = ZZ.lim(ZZ.mix(0.34, 0.97, d) - (e.nivel - 1) * 0.07 * (1 - d), 0, 1);
+      mem.j = e.ops.indexOf(e.ovejas);
+      if (rng() > p) mem.j = (mem.j + 1 + rng.entero(0, 1)) % 3;
+      mem.paso = e.e0 + Math.round(ZZ.mix(90, 18, d) + rng.entre(0, 26));
+    }
+    return n === mem.paso && e.elegido === -2 ? [{ t: 'd', x: OPX[mem.j], y: OPY }] : [];
+  }
+
+  // --- dibujo -----------------------------------------------------------------
+  function bultos(c, l, ex) { c.beginPath(); for (const [a, b, r] of l) { c.moveTo(a + r + ex, b); c.arc(a, b, r + ex, 0, 6.2832); } }
+  const LANA = [[-34, 4, 26], [-10, -16, 30], [22, -12, 28], [40, 8, 24], [4, 14, 30]];
+  const NUBE = [[-46, 10, 38], [-8, -18, 48], [40, -6, 42], [4, 22, 44]];
+
+  function fondo(g) {
+    g.fillStyle = C.cielo; g.fillRect(0, 0, ZZ.PW, ZZ.PH);
+    g.fillStyle = T.trama(g, C.cieloS, 14, 2.8); g.fillRect(0, 0, ZZ.PW, 200);
+    g.fillStyle = '#FFE48A';
+    for (const [x, y, r] of [[300, 96, 8], [420, 150, 6], [70, 180, 7], [200, 230, 5], [580, 360, 6], [40, 400, 5], [470, 60, 5]]) { T.estrella(g, x, y, r * 2, r * 0.8, 4); g.fill(); }
+    // la luna, que también tiene sueño
+    T.circ(g, 546, 150, 70); T.pinta(g, T.TINTA, 0);
+    T.vol(g, c => T.circ(c, 540, 142, 70), '#FFE48A', { sombra: '#F2C24A', dx: -9, dy: -10, w: 7 });
+    for (const [x, y, r] of [[512, 112, 10], [570, 176, 13], [562, 108, 7]]) { T.circ(g, x, y, r); T.pinta(g, '#F2C24A', 0); }
+    g.beginPath(); for (const sg of [-1, 1]) { g.moveTo(540 + sg * 24 - 12, 140); g.quadraticCurveTo(540 + sg * 24, 152, 540 + sg * 24 + 12, 140); } T.linea(g, 6);
+    T.elip(g, 540, 168, 8, 10); T.pinta(g, '#3B1522', 4);
+    // montes y prado
+    T.vol(g, c => { c.beginPath(); c.moveTo(-20, 640); c.lineTo(-20, 470); c.quadraticCurveTo(150, 380, 330, 480); c.quadraticCurveTo(500, 400, 660, 470); c.lineTo(660, 640); c.closePath(); }, C.monte, { sombra: C.monteS, dx: 0, dy: -14, w: 7 });
+    g.fillStyle = T.trama(g, C.monteS, 14, 2.8); g.fillRect(0, 520, ZZ.PW, 70);
+    T.vol(g, c => T.rr(c, -20, 590, 680, 140, 0), C.prado, { sombra: C.pradoS, dx: 0, dy: -18, w: 7 });
+    g.beginPath(); for (const [x, y] of [[60, 640], [220, 668], [460, 644], [580, 672]]) { g.moveTo(x, y); g.lineTo(x + 8, y - 16); g.lineTo(x + 16, y); g.lineTo(x + 24, y - 14); g.lineTo(x + 32, y); } T.linea(g, 4, C.pradoS);
+  }
+
+  // La valla va por delante de las ovejas que pasan por detrás y por detrás de las de delante: en medio.
+  function valla(g) {
+    for (const x of [262, 320, 378]) T.vol(g, c => T.poli(c, [[x - 16, PRADO + 22], [x - 16, PRADO - 74], [x, PRADO - 94], [x + 16, PRADO - 74], [x + 16, PRADO + 22]]), T.PAPEL, { sombra: '#D9CDB3', dx: -5, dy: 0, w: 6 });
+    for (const y of [PRADO - 54, PRADO - 14]) T.vol(g, c => T.rr(c, 236, y, 168, 16, 6), T.PAPEL, { sombra: '#D9CDB3', dx: 0, dy: -5, w: 6 });
+  }
+
+  // La cama, en primer plano: quien cuenta es Ajuste.
+  function cama(g) {
+    T.vol(g, c => T.rr(c, -20, 736, 680, 130, 0), C.colcha, { sombra: C.colchaS, dx: 0, dy: 22, w: 7 });
+    g.fillStyle = T.trama(g, C.colchaS, 14, 2.8); g.fillRect(0, 790, ZZ.PW, 50);
+    g.fillStyle = T.AMARILLO; for (const [x, y, r] of [[330, 792, 9], [450, 812, 7], [570, 786, 9], [250, 818, 6]]) { T.estrella(g, x, y, r * 2, r * 0.8, 5); g.fill(); }
+    T.vol(g, c => T.rr(c, -20, 716, 680, 30, 12), T.PAPEL, { sombra: '#D9CDB3', dx: 0, dy: -8, w: 7 });
+  }
+
+  function oveja(g, lobo, t, u) {
+    const pata = Math.sin(u * Math.PI);        // en el aire estira las patas
+    // patas
+    g.beginPath();
+    for (const [x, d] of [[-26, -1], [-8, -1], [16, 1], [32, 1]]) { g.moveTo(x, 20); g.lineTo(x + d * pata * 16, 46 - pata * 6); }
+    T.linea(g, 9, lobo ? C.loboS : '#3A3350');
+    if (lobo) { T.vol(g, c => { c.beginPath(); c.moveTo(-52, 0); c.quadraticCurveTo(-96, -30, -104, 14); c.quadraticCurveTo(-78, 12, -52, 18); c.closePath(); }, C.lobo, { sombra: C.loboS, dx: 0, dy: -5, w: 6 }); }
+    // lana
+    bultos(g, LANA, 6); g.fillStyle = T.TINTA; g.fill();
+    T.vol(g, c => bultos(c, LANA, 0), C.lana, { sombra: C.lanaS, dx: -6, dy: -8, w: 0 });
+    // cabeza
+    g.save(); g.translate(58, -22);
+    if (lobo) {
+      for (const sg of [-1, 1]) { T.poli(g, [[sg * 10, -24], [sg * 26, -52], [sg * 30, -18]]); T.pinta(g, C.lobo, 5); }
+      T.vol(g, c => { c.beginPath(); c.moveTo(-26, -22); c.lineTo(22, -22); c.lineTo(54, 12); c.lineTo(22, 26); c.lineTo(-26, 22); c.closePath(); }, C.lobo, { sombra: C.loboS, dx: -5, dy: -5, w: 6 });
+      T.circ(g, 52, 10, 7); T.pinta(g, T.TINTA, 0);
+      g.fillStyle = '#FFFFFF'; for (const x of [12, 26, 38]) { T.poli(g, [[x, 20], [x + 10, 18], [x + 5, 32]]); g.fill(); T.poli(g, [[x, 20], [x + 10, 18], [x + 5, 32]]); T.linea(g, 2.5); }
+      for (const sg of [-1, 1]) { T.elip(g, sg * 11 - 2, -6, 8, 9); T.pinta(g, '#FFE48A', 3.5); T.circ(g, sg * 11, -5, 3.5); T.pinta(g, T.TINTA, 0); }
+      g.beginPath(); g.moveTo(-22, -20); g.lineTo(-6, -13); g.moveTo(18, -20); g.lineTo(2, -13); T.linea(g, 5);
+    } else {
+      for (const sg of [-1, 1]) T.vol(g, c => T.elip(c, sg * 26, -10, 14, 8, sg * 0.6), C.cara, { sombra: '#EAC79A', dx: 0, dy: -3, w: 5 });
+      T.vol(g, c => T.elip(c, 0, 0, 27, 30), C.cara, { sombra: '#EAC79A', dx: -5, dy: -6, w: 6 });
+      bultos(g, [[-12, -28, 10], [4, -32, 11], [18, -26, 9]], 4); g.fillStyle = T.TINTA; g.fill();
+      bultos(g, [[-12, -28, 10], [4, -32, 11], [18, -26, 9]], 0); g.fillStyle = C.lana; g.fill();
+      g.scale(0.5, 0.5); P.cara(g, 'contento', t, { ex: 20, ey: -4, by: 24, piel: C.cara });
+    }
+    g.restore();
+  }
+
+  function burbuja(g, x, y, num, estado, t, i) {
+    g.save(); g.translate(x, y + Math.sin(t * 0.12 + i * 2) * 6); g.scale(0.92, 0.92);
+    g.save(); g.translate(7, 10); bultos(g, NUBE, 6); g.fillStyle = T.TINTA; g.fill(); g.restore();
+    bultos(g, NUBE, 7); g.fillStyle = T.TINTA; g.fill();
+    const col = estado === 1 ? T.AMARILLO : estado === 2 ? '#FF9FA8' : '#FFFFFF';
+    T.vol(g, c => bultos(c, NUBE, 0), col, { sombra: estado === 1 ? '#F2C24A' : estado === 2 ? '#E8707C' : C.lanaS, dx: -7, dy: -10, w: 0 });
+    T.texto(g, String(num), 0, 4, 76, { color: T.TINTA, w: 0 });
+    g.restore();
+  }
+
+  function dibuja(g, e, vis) {
+    const n = vis.n, t = vis.t, pregunta = n >= e.e0, hecho = e.elegido !== -2;
+    T.capa(g, vis, 'noches', fondo);
+    // por detrás de la valla, las de las filas del fondo; por delante, las de la primera
+    const pinta = fila => {
+      for (const b of e.bichos) {
+        if ((b.fila === 2) !== fila) continue;
+        const u = (n - b.s) / CRUZA;
+        if (u < 0 || u > 1) continue;
+        const sc = [0.82, 0.92, 1.04][b.fila];
+        g.save(); g.translate(-90 + u * 820, PRADO - 30 + (b.fila - 1) * 16 - Math.sin(u * Math.PI) * (150 + b.fila * 10));
+        g.rotate((u - 0.5) * 0.7); g.scale(sc, sc);
+        oveja(g, b.lobo, t + b.s, u);
+        g.restore();
+      }
+    };
+    pinta(false);
+    T.capa(g, vis, 'nochesValla', valla);
+    pinta(true);
+    vis.ch.dibuja(g, 0);
+    // Ajuste, en la cama, con su gorro de dormir
+    const expr = !hecho ? (pregunta ? 'tension' : 'neutro') : e.elegido >= 0 && e.ops[e.elegido] === e.ovejas ? 'contento' : 'susto';
+    P.busto(g, 126, 690, 1.0, P.AJUSTE, expr, t, pregunta ? {} : { mira: { x: 0.6, y: -0.8 } });
+    g.save(); g.translate(126, 630 + Math.sin(t * 0.09) * 1.5); g.rotate(-0.2);
+    T.vol(g, c => { c.beginPath(); c.moveTo(-58, 6); c.quadraticCurveTo(-30, -70, 40, -92); c.quadraticCurveTo(60, -40, 58, 6); c.closePath(); }, T.AZUL, { sombra: '#1F4FD0', dx: -8, dy: 0, w: 6 });
+    T.vol(g, c => T.rr(c, -64, -2, 128, 20, 10), T.PAPEL, { sombra: '#D9CDB3', dx: 0, dy: -5, w: 6 });
+    T.circ(g, 46, -94, 14); T.pinta(g, T.PAPEL, 5);
+    g.restore();
+    T.capa(g, vis, 'nochesCama', cama);
+    // las bolitas de lo que está pensando
+    if (!pregunta) for (const [x, y, r] of [[210, 626, 10], [236, 594, 14]]) { T.circ(g, x, y + Math.sin(t * 0.1 + x) * 3, r); T.pinta(g, '#FFFFFF', 5); }
+    if (pregunta) for (let i = 0; i < 3; i++) {
+      const bueno = e.ops[i] === e.ovejas;
+      burbuja(g, OPX[i], OPY, e.ops[i], !hecho ? 0 : bueno ? 1 : i === e.elegido ? 2 : 0, t, i);
+      if (!hecho) T.marca(g, OPX[i], OPY - 96 + Math.sin(t * 0.22 + i) * 5, 0, 28);
+    }
+    vis.ch.dibuja(g, 1);
+  }
+
+  function efectos(e, vis, ev, son) {
+    for (const x of ev) {
+      if (x.t === 'sale') { son && (x.lobo ? son.golpe() : son.agarra()); }
+      else if (x.t === 'pregunta') { T.palabra(vis.ch, '¿CUÁNTAS OVEJAS?', 320, 470, T.AMARILLO, 50, 1, true); son && son.orden(); }
+      else if (x.t === 'acierto') {
+        T.estrellas(vis.ch, OPX[x.j], OPY, 12, T.AMARILLO, 13, 22, 1);
+        T.confeti(vis.ch, OPX[x.j], OPY - 40, 26, [T.AMARILLO, T.ROJO, T.MENTA, T.PAPEL], 12, 1);
+        T.palabra(vis.ch, '¡A DORMIR!', 320, 470, T.AMARILLO, 58, 1, true);
+        son && son.sol();
+      } else if (x.t === 'fallo') {
+        vis.temblor = 10;
+        T.palabra(vis.ch, x.casi ? '¡POR UNA!' : '¡TE HAS LIADO!', 320, 470, T.ROJO, 54, 1, true);
+        son && son.fallo();
+      } else if (x.t === 'tarde') { T.palabra(vis.ch, '¡TE DORMISTE!', 320, 470, T.ROJO, 54, 1, true); son && son.fallo(); }
+    }
+  }
+
+  ZZ.canales.noches = {
+    id: 'noches', num: 14, nombre: 'BUENAS NOCHES', orden: '¿CUÁNTAS?', hechoTxt: '¡ZZZ!',
+    pista: 'Cuenta las ovejas y toca el número',
+    rotulo: 'ANTES DE DORMIR: «CONTANDO OVEJAS»',
+    color: C.cielo, color2: C.prado, color3: T.AMARILLO,
+    pasos: TOTAL,      // diez segundos
+    animo: x => (x.t === 'acierto' ? 1 : x.t === 'fallo' || x.t === 'tarde' ? -1 : 0),
+    init, paso, puntuacion, casa, dibuja, efectos,
+  };
+})();
+//# sourceURL=zz/canales/noches.js
 </script>
 <script>
 /* ZikZak · tele
@@ -4530,7 +5225,7 @@
 (function () {
   'use strict';
   const ZZ = window.ZZ, C = ZZ.codigo = {};
-  const IDS = ['cocina', 'tiempo', 'western', 'concurso', 'teletienda', 'bricolaje', 'documental', 'musical', 'noticias', 'magia', 'deportes'];      // este orden va dentro de los códigos: no se cambia
+  const IDS = ['cocina', 'tiempo', 'western', 'concurso', 'teletienda', 'bricolaje', 'documental', 'musical', 'noticias', 'magia', 'deportes', 'terror', 'dibujos', 'noches'];      // este orden va dentro de los códigos: no se cambia
   const TIPOS = ['d', 'm', 'u'];
   const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 
