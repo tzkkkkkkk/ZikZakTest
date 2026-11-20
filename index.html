@@ -24,7 +24,7 @@
   }
   #zzcod[hidden] { display: none; }
 </style>
-<div id="marco"><canvas id="zz" role="img" aria-label="ZikZak: duelos de minijuegos de cinco segundos. Se juega tocando la pantalla."></canvas></div>
+<div id="marco"><canvas id="zz" role="img" aria-label="ZikZak: duelos de minijuegos. Se juega tocando la pantalla."></canvas></div>
 <script>
 /* ZikZak · configuración
    El servidor de tiempo real para jugar en directo fuera de claude.ai.
@@ -45,12 +45,14 @@
   'use strict';
   const ZZ = window.ZZ = window.ZZ || {};
 
-  ZZ.VERSION = '1.0';
+  ZZ.VERSION = '1.1';
   ZZ.HZ = 60;          // pasos de lógica por segundo
-  ZZ.PASOS = 300;      // cinco segundos
+  ZZ.PASOS = 300;      // cinco segundos: lo que dura un canal si no dice otra cosa
   ZZ.PW = 640;         // tamaño lógico de la pantalla de la tele
   ZZ.PH = 840;
   ZZ.canales = {};
+  // Cada canal puede durar lo suyo (5, 10, 30 segundos…): lo dice en `pasos`.
+  ZZ.pasosDe = canal => (canal && canal.pasos) || ZZ.PASOS;
 
   // --- utilidades ---------------------------------------------------------
   ZZ.lim = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -102,7 +104,7 @@
       e.ev = [];
       this.canal.paso(e, entradas, this.n);
       this.n++;
-      if (this.n >= ZZ.PASOS || e.hecho) this.fin = true;
+      if (this.n >= ZZ.pasosDe(this.canal) || e.hecho) this.fin = true;
       this.ev = e.ev;
       return this.ev;
     }
@@ -575,7 +577,7 @@
   S.pierde = () => serie([392, 370, 330, 294, 262], 0.16, { tipo: 'sawtooth', vol: 0.1, dur: 0.3 });
   S.cara = () => { tono(300, 0.1, { tipo: 'sine', hasta: 600, vol: 0.12 }); };
 
-  // --- sintonías: cinco segundos por canal -------------------------------------------
+  // --- sintonías: cinco segundos, que se repiten si el canal dura más -------------------------------------------
   const hz = n => 440 * Math.pow(2, (n - 69) / 12);
   const SINT = {
     cocina: {
@@ -610,41 +612,31 @@
       bajo: [45, 45, 45, 45, 48, 48, 43, 43, 45, 45], onda: 'square',
       mel: [76, 0, 76, 79, 0, 81, 79, 76, 0, 74, 76, 79, 0, 81, 84, 81, 79, 0, 76, 74],
     },
-    burbujas: {
-      bajo: [48, 48, 55, 55, 53, 53, 48, 48, 55, 48], onda: 'sine',
-      mel: [84, 0, 88, 91, 0, 88, 84, 81, 0, 84, 88, 91, 0, 95, 91, 88, 84, 0, 81, 84],
-    },
-    equilibrista: {
-      bajo: [43, 43, 50, 50, 48, 48, 46, 46, 43, 43], onda: 'triangle',
-      mel: [72, 0, 76, 79, 0, 76, 72, 0, 67, 72, 0, 74, 76, 0, 72, 67, 0, 69, 72, 0],
-    },
-    revoltijo: {
-      bajo: [50, 50, 57, 57, 55, 55, 52, 52, 50, 50], onda: 'square',
-      mel: [79, 83, 86, 0, 83, 79, 88, 86, 0, 83, 79, 81, 86, 0, 88, 86, 83, 79, 0, 83],
-    },
   };
-  S.sintonia = function (id) {
+  S.sintonia = function (id, segundos) {
     S.calla();
     const m = SINT[id];
     if (!ac || mudo || !m) return;
     const gn = ac.createGain(); gn.gain.value = 1; gn.connect(salida);
     musica = gn;
+    for (let T0 = 0; T0 < (segundos || 5); T0 += 5) {
     m.bajo.forEach((n, i) => {
       if (m.galope) {
-        tono(hz(n), 0.2, { tipo: 'triangle', vol: 0.2, t0: i * 0.5, dest: gn });
-        tono(hz(n), 0.1, { tipo: 'triangle', vol: 0.16, t0: i * 0.5 + 0.25, dest: gn });
-        tono(hz(n + 7), 0.1, { tipo: 'triangle', vol: 0.16, t0: i * 0.5 + 0.375, dest: gn });
+        tono(hz(n), 0.2, { tipo: 'triangle', vol: 0.2, t0: T0 + i * 0.5, dest: gn });
+        tono(hz(n), 0.1, { tipo: 'triangle', vol: 0.16, t0: T0 + i * 0.5 + 0.25, dest: gn });
+        tono(hz(n + 7), 0.1, { tipo: 'triangle', vol: 0.16, t0: T0 + i * 0.5 + 0.375, dest: gn });
       } else {
-        tono(hz(n), 0.3, { tipo: 'triangle', vol: 0.22, t0: i * 0.5, dest: gn });
-        tono(hz(n + 12), 0.12, { tipo: 'triangle', vol: 0.1, t0: i * 0.5 + 0.25, dest: gn });
+        tono(hz(n), 0.3, { tipo: 'triangle', vol: 0.22, t0: T0 + i * 0.5, dest: gn });
+        tono(hz(n + 12), 0.12, { tipo: 'triangle', vol: 0.1, t0: T0 + i * 0.5 + 0.25, dest: gn });
       }
     });
     m.mel.forEach((n, i) => {
       if (!n) return;
       let largo = 1;
       while (i + largo < m.mel.length && !m.mel[i + largo]) largo++;
-      tono(hz(n), 0.25 * largo * 0.92, { tipo: m.onda, vol: m.onda === 'square' ? 0.045 : 0.1, t0: i * 0.25, dest: gn, ataque: 0.012 });
+      tono(hz(n), 0.25 * largo * 0.92, { tipo: m.onda, vol: m.onda === 'square' ? 0.045 : 0.1, t0: T0 + i * 0.25, dest: gn, ataque: 0.012 });
     });
+    }
   };
   S.calla = function () {
     if (!musica || !ac) return;
@@ -2263,8 +2255,8 @@
         const bien = x.pts >= 700;
         T.estrellas(vis.ch, 320, 520, bien ? 9 : 5, T.AMARILLO, 9, bien ? 20 : 14, 1);
         vis.ch.mas({ tipo: 'anillo', x: 320, y: 540, r: 40, R: 200, w: 14, color: '#FFFFFF', vida: 16, capa: 1 });
-        T.palabra(vis.ch, (x.r / 60).toFixed(2).replace('.', ',') + ' s', 320, 120, bien ? T.AMARILLO : T.PAPEL, 64, 1);
-        T.palabra(vis.ch, bien ? '¡RAYO!' : x.pts >= 350 ? '¡VALE!' : '¡QUÉ PACHORRA!', 320, 440, bien ? T.AMARILLO : T.PAPEL, 46, 1);
+        // solo cabe una palabra a la vez: el grito y el tiempo van juntos
+        T.palabra(vis.ch, (bien ? '¡RAYO! ' : x.pts >= 350 ? '¡VALE! ' : '¡PACHORRA! ') + (x.r / 60).toFixed(2).replace('.', ',') + ' s', 320, 440, bien ? T.AMARILLO : T.PAPEL, 42, 1);
         vis.temblor = 7; vis.parada = 2;
         son && son.golpe();
       } else if (x.t === 'antes') {
@@ -2320,10 +2312,7 @@
       e.derrame = true; e.pts = 0; e.ev.push({ t: 'derrame' }); return;
     }
     const N = NIV[e.nivel], err = e.raya - e.cantidad;
-    if (err < 0) {
-      e.derrame = true; e.pts = 0; e.ev.push({ t: 'derrame' }); return;
-    }
-    e.pts = Math.max(0, Math.round((1 - err / N.tol) * 1000));
+    e.pts = Math.max(0, Math.round((1 - (err < 0 ? -2 * err : err) / N.tol) * 1000));
     e.ev.push({ t: 'sirve', err, pts: e.pts });
   }
 
@@ -2351,7 +2340,7 @@
       mem.soltar = 0;
       let mejor = 1e9;
       for (let i = 8; i < 150; i++) {
-        const q = i * NIV[e.nivel].vel, raya = rayaEn(e, i), err = raya >= q ? raya - q : 1000 + q - raya;
+        const q = i * NIV[e.nivel].vel, raya = rayaEn(e, i), err = raya >= q ? raya - q : 2 * (q - raya);
         if (err < mejor) { mejor = err; mem.soltar = i; }
       }
       mem.soltar = ZZ.lim(mem.soltar + Math.round(rng.campana() * ZZ.mix(8, 1, d)), 4, 145);
@@ -2362,47 +2351,83 @@
 
   function fondo(g) {
     g.fillStyle = C.fondo; g.fillRect(0, 0, ZZ.PW, ZZ.PH);
-    g.fillStyle = T.trama(g, C.fondoS, 18, 3); g.fillRect(0, 0, ZZ.PW, ZZ.PH);
-    T.texto(g, 'TELETIENDA', 320, 86, 48, { color: T.PAPEL, w: 9 });
-    T.texto(g, '¡LLENA!', 320, 145, 70, { color: C.etiqueta, w: 11 });
-    T.vol(g, c => T.rr(c, 44, 224, 552, 28, 10), C.balda, { sombra: T.oscuro(C.balda), dx: 0, dy: 9, w: 6 });
-    for (const x of [104, 320, 536]) {
-      T.vol(g, c => T.rr(c, x - 44, 170, 88, 58, 14), C.etiqueta, { dx: -6, dy: -6, w: 5 });
-      T.circ(g, x, 197, 14); T.pinta(g, C.fondoS, 4);
-    }
-    T.vol(g, c => T.rr(c, 0, 698, 640, 180, 0), C.fondoS, { sombra: '#7D2D2A', dx: 0, dy: 10, w: 0 });
+    T.rayos(g, 320, 470, 900, 14, 0.2, T.claro(C.fondo, 0.22));
+    g.fillStyle = T.trama(g, C.fondoS, 16, 2.6); g.fillRect(0, 0, ZZ.PW, 250);
+    // pegatina de oferta
+    g.save(); g.translate(118, 300); g.rotate(-0.22);
+    T.estallido(g, 4, 6, 92, 11, 0.1, T.TINTA, 0, 5);
+    T.estallido(g, 0, 0, 92, 11, 0.1, C.etiqueta, 6, 5);
+    T.texto(g, '9,99', 0, -6, 46, { color: T.ROJO, w: 7 });
+    T.texto(g, '¡SOLO HOY!', 0, 34, 15, { color: T.TINTA, fuente: T.F_UI, peso: 900, w: 0 });
+    g.restore();
+    // el teléfono de pedidos
+    g.save(); g.translate(530, 520); g.rotate(0.14);
+    T.vol(g, c => T.rr(c, -52, -6, 104, 74, 14), T.ROJO, { dx: -8, dy: -6, w: 6 });
+    T.circ(g, 0, 32, 20); T.pinta(g, T.PAPEL, 5);
+    T.circ(g, 0, 32, 6); T.pinta(g, T.TINTA, 0);
+    T.tubo(g, c => { c.beginPath(); c.moveTo(-58, -8); c.quadraticCurveTo(0, -52, 58, -8); }, T.ROJO, 26, 6);
+    g.restore();
+    // mostrador con mantel
+    T.vol(g, c => T.rr(c, -20, 604, 680, 276, 0), C.balda, { sombra: T.oscuro(C.balda, 0.35), dx: 0, dy: 26, w: 7 });
+    g.fillStyle = T.trama(g, T.oscuro(C.balda, 0.3), 14, 2.4); g.fillRect(0, 668, ZZ.PW, 172);
+    // el grifo
+    T.vol(g, c => T.rr(c, 262, -30, 116, 170, 22), '#DCE6EE', { sombra: '#93A6B8', dx: -14, dy: 0, w: 7 });
+    T.vol(g, c => T.rr(c, 240, 128, 160, 34, 12), '#DCE6EE', { sombra: '#93A6B8', dx: 0, dy: -10, w: 7 });
+    T.vol(g, c => T.poli(c, [[292, 160], [348, 160], [338, 226], [302, 226]]), '#DCE6EE', { sombra: '#93A6B8', dx: -8, dy: 0, w: 7 });
+    T.circ(g, 320, 70, 26); T.pinta(g, C.liquido, 6);
+    T.elip(g, 312, 60, 9, 5, -0.5); T.pinta(g, '#FFFFFF', 0);
   }
 
   function vaso(g, e, vis) {
-    const N = NIV[e.nivel], x = 320, y = 300, h = 340, w = N.ancho;
+    const N = NIV[e.nivel], x = 320, y = 290, h = 350, w = N.ancho, t = vis.t;
     const arriba = y + h * (1 - e.cantidad);
-    T.vol(g, c => T.rr(c, x - w / 2, y, w, h, 20), C.vaso, { sombra: C.vasoS, dx: -9, dy: -10, w: 0 });
-    g.save();
-    T.rr(g, x - w / 2, y, w, h, 20); g.clip();
-    g.fillStyle = C.liquido; g.fillRect(x - w, arriba, w * 2, h + 30);
-    g.globalAlpha = 0.25; g.fillStyle = '#FFFFFF'; g.fillRect(x - w / 2 + 18, y, 18, h);
+    const cam = c => { c.beginPath(); c.moveTo(x - w / 2, y); c.lineTo(x - w / 2, y + h - 18); c.quadraticCurveTo(x - w / 2, y + h, x - w / 2 + 18, y + h);
+      c.lineTo(x + w / 2 - 18, y + h); c.quadraticCurveTo(x + w / 2, y + h, x + w / 2, y + h - 18); c.lineTo(x + w / 2, y); };
+    // sombra del vaso en el mantel
+    T.elip(g, x + 14, y + h + 4, w * 0.62, 16); T.pinta(g, T.oscuro(C.balda, 0.45), 0);
+    cam(g); g.fillStyle = C.vaso; g.globalAlpha = 0.8; g.fill(); g.globalAlpha = 1;
+    g.save(); cam(g); g.clip();
+    // líquido con la superficie ondulada
+    g.beginPath(); g.moveTo(x - w, y + h + 20);
+    for (let i = 0; i <= 12; i++) { const px = x - w / 2 + i * w / 12; g.lineTo(px, arriba + (e.llenando ? Math.sin(t * 0.5 + i * 1.1) * 5 : 0)); }
+    g.lineTo(x + w, y + h + 20); g.closePath(); g.fillStyle = C.liquido; g.fill();
+    g.fillStyle = T.oscuro(C.liquido, 0.22); g.fillRect(x + w / 2 - 26, arriba, 26, h);
+    g.fillStyle = T.claro(C.liquido, 0.5); g.fillRect(x - w / 2, arriba - 2, w, 9);
+    // burbujas
+    for (let i = 0; i < 6; i++) {
+      const by = y + h - ((t * (1.4 + i * 0.3) + i * 67) % h);
+      if (by > arriba + 14) { T.circ(g, x - w / 2 + 24 + ((i * 53) % (w - 48)), by, 5 + (i % 3) * 2); T.linea(g, 3, T.claro(C.liquido, 0.6)); }
+    }
+    // brillo del cristal
+    g.globalAlpha = 0.5; g.fillStyle = '#FFFFFF'; T.rr(g, x - w / 2 + 16, y + 20, 14, h - 70, 7); g.fill();
+    g.globalAlpha = 1; g.fillStyle = C.vasoS; g.fillRect(x - w / 2, y + h - 16, w, 16);
     g.restore();
-    T.rr(g, x - w / 2, y, w, h, 20); T.linea(g, 8, T.TINTA);
+    cam(g); T.linea(g, 8);
+    T.rr(g, x - w / 2 - 8, y - 8, w + 16, 14, 7); T.pinta(g, T.claro(C.vaso, 0.5), 5);
+    // la raya: dos flechas y una línea de puntos
     const ry = y + h * (1 - e.raya);
-    g.beginPath(); g.moveTo(x - w / 2 - 28, ry); g.lineTo(x + w / 2 + 28, ry); T.linea(g, 10, C.raya);
-    T.texto(g, 'RAYA', x + w / 2 + 51, ry, 20, { color: C.raya, fuente: T.F_UI, peso: 900, w: 4 });
+    g.setLineDash([14, 10]); g.beginPath(); g.moveTo(x - w / 2, ry); g.lineTo(x + w / 2, ry); T.linea(g, 6, C.raya); g.setLineDash([]);
+    for (const s of [-1, 1]) {
+      const px = x + s * (w / 2 + 10);
+      T.vol(g, c => T.poli(c, [[px, ry], [px + s * 38, ry - 22], [px + s * 38, ry + 22]]), C.raya, { dx: 0, dy: 5, w: 5 });
+    }
     if (e.llenando) {
-      T.tubo(g, c => { c.moveTo(x, 242); c.lineTo(x, y + 4); }, C.liquido, 18, 5);
-      T.circ(g, x, 238, 16); T.pinta(g, C.liquido, 5);
+      T.tubo(g, c => { c.beginPath(); c.moveTo(x, 226); c.lineTo(x, Math.max(236, arriba)); }, C.liquido, 20, 5);
+      for (const s of [-1, 1]) { T.circ(g, x + s * (16 + (t * 3 % 14)), arriba - 6 - (t * 2 % 12), 5); T.pinta(g, C.liquido, 3); }
     }
     if (e.derrame) {
-      for (const dx of [-52, -18, 18, 52]) {
-        T.tubo(g, c => { c.moveTo(x + dx, y + 20); c.lineTo(x + dx + dx * 0.15, y - 32); }, C.liquido, 9, 3);
+      for (const dx of [-1, 1]) {
+        T.tubo(g, c => { c.beginPath(); c.moveTo(x + dx * (w / 2 - 6), y + 6); c.quadraticCurveTo(x + dx * (w / 2 + 34), y - 20, x + dx * (w / 2 + 30), y + 120); }, C.liquido, 14, 5);
       }
+      T.vol(g, c => T.elip(c, x, y + h + 14, w * 0.9, 20), C.liquido, { dx: 0, dy: 6, w: 6 });
     }
-    T.texto(g, Math.round(e.cantidad * 100) + '%', x, y + h + 55, 42, { color: T.PAPEL, w: 7 });
-    T.texto(g, 'MANTÉN · SUELTA', x, 774, 25, { color: T.PAPEL, fuente: T.F_UI, peso: 900, w: 4 });
   }
 
   function dibuja(g, e, vis) {
     T.capa(g, vis, 'teletienda', fondo);
+    vis.ch.dibuja(g, 0);
     vaso(g, e, vis);
-    vis.ch.dibuja(g, 0); vis.ch.dibuja(g, 1);
+    vis.ch.dibuja(g, 1);
   }
 
   function efectos(e, vis, ev, son) {
@@ -2410,11 +2435,11 @@
       if (x.t === 'sirve') {
         const bien = x.pts >= 700;
         T.estrellas(vis.ch, 320, 300, bien ? 10 : 5, bien ? T.AMARILLO : T.PAPEL, 10, bien ? 22 : 14, 1);
-        T.palabra(vis.ch, bien ? '¡A MEDIDA!' : '¡SERVIDO!', 320, 150, bien ? T.AMARILLO : T.PAPEL, 44, 1);
+        T.palabra(vis.ch, bien ? '¡A MEDIDA!' : x.err < 0 ? '¡TE PASASTE!' : x.pts ? '¡SERVIDO!' : '¡QUÉ POCO!', 320, 150, bien ? T.AMARILLO : T.PAPEL, 44, 1);
         son && (bien ? son.acierto() : son.golpe());
       } else if (x.t === 'derrame') {
         T.palabra(vis.ch, '¡SE DERRAMA!', 320, 150, T.ROJO, 46, 1);
-        T.polvo(vis.ch, 320, 300, 8, T.AZUL, 7, 22, 1);
+        T.polvo(vis.ch, 320, 300, 10, C.liquido, 8, 20, 1); vis.temblor = 10;
         son && son.fallo();
       }
     }
@@ -2440,9 +2465,9 @@
   const ZZ = window.ZZ, T = ZZ.tinta;
 
   const NIV = [null,
-    { vel: 0.025, zona: 0.17, clavos: 1 },
-    { vel: 0.041, zona: 0.115, clavos: 1 },
-    { vel: 0.062, zona: 0.075, clavos: 2 }];
+    { vel: 0.02, zona: 0.2, clavos: 1 },
+    { vel: 0.027, zona: 0.16, clavos: 1 },
+    { vel: 0.031, zona: 0.15, clavos: 2 }];
   const C = { fondo: '#172844', fondoS: '#101C32', panel: '#223B5D', madera: '#B96F42', maderaS: '#77452F', metal: '#D4E1E8', metalS: '#71879A', amarillo: '#FFD45A', verde: '#59D69B' };
 
   function fuerzaEn(e, n) {
@@ -2461,7 +2486,7 @@
     const objetivo = e.clavos[e.activa], err = Math.abs(e.fuerza - objetivo), zona = NIV[e.nivel].zona;
     const pts = Math.max(0, Math.round((1 - err / zona) * 1000));
     e.suma += pts; e.golpes++; e.cool = 10;
-    e.ev.push({ t: 'golpe', pts, err, bueno: pts >= 700, y: e.fuerza });
+    e.ev.push({ t: 'golpe', pts, err, bueno: pts >= 700, y: e.fuerza, fuerte: e.fuerza > objetivo });
     e.activa++;
     if (e.activa >= e.clavos.length) e.resuelto = true;
     else e.espera = 20;
@@ -2493,67 +2518,101 @@
     return n === mem.paso ? [{ t: 'd', x: 320, y: 420 }] : [];
   }
 
+  const MX = 78, MY0 = 250, MY1 = 590;      // el medidor: de abajo (flojo) a arriba (fuerte)
   function fondo(g) {
     g.fillStyle = C.fondo; g.fillRect(0, 0, ZZ.PW, ZZ.PH);
-    g.fillStyle = T.trama(g, C.fondoS, 18, 3); g.fillRect(0, 0, ZZ.PW, ZZ.PH);
-    T.texto(g, 'BRICOLAJE', 320, 78, 42, { color: T.PAPEL, w: 8 });
-    T.texto(g, '¡CLAVA!', 320, 137, 68, { color: C.amarillo, w: 10 });
-    T.vol(g, c => T.rr(c, 42, 185, 556, 304, 24), C.panel, { sombra: C.fondoS, dx: 0, dy: 12, w: 5 });
-    T.texto(g, 'REGULA LA FUERZA', 320, 237, 24, { color: T.PAPEL, fuente: T.F_UI, peso: 900, w: 3 });
-    T.vol(g, c => T.rr(c, 0, 740, 640, 120, 0), C.fondoS, { sombra: '#0A1323', dx: 0, dy: 8, w: 0 });
-  }
-
-  function medidor(g, e) {
-    const x0 = 108, x1 = 532, y = 365, w = x1 - x0, zona = NIV[e.nivel].zona;
-    const objetivo = e.clavos[Math.min(e.activa, e.clavos.length - 1)];
-    const tx = x0 + objetivo * w, cx = x0 + e.fuerza * w;
-    T.vol(g, c => T.rr(c, x0 - 9, y - 24, w + 18, 48, 23), C.metalS, { sombra: '#17263A', dx: 0, dy: 7, w: 4 });
-    T.rr(g, x0, y - 16, w, 32, 16); T.pinta(g, '#EAF2F5', 0);
-    T.rr(g, tx - zona * w, y - 21, zona * w * 2, 42, 18); T.pinta(g, C.amarillo, 0);
-    g.globalAlpha = 0.25; g.fillStyle = '#FFFFFF'; g.fillRect(tx - zona * w, y - 17, zona * w * 2, 9); g.globalAlpha = 1;
-    T.vol(g, c => T.rr(c, cx - 12, y - 30, 24, 60, 10), T.ROJO, { sombra: '#9E2438', dx: 0, dy: 4, w: 3 });
-    T.circ(g, tx, y, 8); T.pinta(g, C.panel, 0);
-    T.texto(g, 'SUAVE', x0, 420, 17, { color: '#B9C9D8', fuente: T.F_UI, peso: 800, w: 2 });
-    T.texto(g, 'FUERTE', x1, 420, 17, { color: '#B9C9D8', fuente: T.F_UI, peso: 800, w: 2 });
-    T.texto(g, 'PUNTO JUSTO', tx, 319, 21, { color: C.amarillo, fuente: T.F_UI, peso: 900, w: 3 });
-  }
-
-  function martillo(g, x, y, golpeado) {
-    g.save(); g.translate(x, y); g.rotate(golpeado ? -0.72 : -0.38);
-    T.vol(g, c => T.rr(c, -9, 8, 18, 106, 8), C.madera, { sombra: C.maderaS, dx: -4, dy: -4, w: 4 });
-    T.vol(g, c => T.rr(c, -53, -18, 106, 38, 12), C.metal, { sombra: C.metalS, dx: -5, dy: -5, w: 5 });
+    // panel de herramientas
+    T.vol(g, c => T.rr(c, 150, 60, 460, 330, 16), C.panel, { sombra: C.fondoS, dx: 0, dy: 12, w: 7 });
+    g.fillStyle = T.trama(g, C.fondoS, 26, 3.4); g.fillRect(164, 74, 432, 300);
+    // serrucho
+    g.save(); g.translate(250, 170); g.rotate(-0.5);
+    const dientes = [[-20, -22], [150, -10]];
+    for (let i = 0; i <= 10; i++) { dientes.push([150 - i * 17, 18]); dientes.push([141 - i * 17, 6]); }
+    T.vol(g, c => T.poli(c, dientes), C.metal, { sombra: C.metalS, dx: 0, dy: -6, w: 5 });
+    T.vol(g, c => T.rr(c, -78, -34, 70, 64, 18), C.madera, { sombra: C.maderaS, dx: -6, dy: 0, w: 6 });
+    T.rr(g, -60, -14, 34, 24, 10); T.pinta(g, C.panel, 5);
     g.restore();
+    // llave inglesa
+    g.save(); g.translate(470, 150); g.rotate(0.3);
+    T.vol(g, c => T.rr(c, -12, -10, 24, 170, 10), C.metal, { sombra: C.metalS, dx: -6, dy: 0, w: 5 });
+    T.vol(g, c => T.circ(c, 0, -22, 34), C.metal, { sombra: C.metalS, dx: -6, dy: 0, w: 5 });
+    T.poli(g, [[-12, -62], [12, -62], [12, -22], [-12, -22]]); T.pinta(g, C.panel, 5);
+    g.restore();
+    // destornillador
+    g.save(); g.translate(540, 300); g.rotate(-1.2);
+    T.tubo(g, c => { c.beginPath(); c.moveTo(0, 0); c.lineTo(90, 0); }, C.metal, 10, 4);
+    T.vol(g, c => T.rr(c, -70, -18, 76, 36, 16), T.ROJO, { dx: 0, dy: -6, w: 5 });
+    g.restore();
+    // banco de trabajo
+    T.vol(g, c => T.rr(c, -20, 640, 680, 240, 0), C.madera, { sombra: C.maderaS, dx: 0, dy: 34, w: 7 });
+    g.beginPath();
+    for (const [x, y, l] of [[40, 716, 150], [260, 742, 210], [470, 708, 120], [120, 790, 180], [400, 800, 170]]) { g.moveTo(x, y); g.quadraticCurveTo(x + l / 2, y + 9, x + l, y); }
+    T.linea(g, 4, C.maderaS);
+    // caja del medidor
+    T.vol(g, c => T.rr(c, MX - 38, MY0 - 34, 76, MY1 - MY0 + 68, 30), C.metalS, { sombra: '#3E5266', dx: -8, dy: 0, w: 7 });
+    T.rr(g, MX - 18, MY0, 36, MY1 - MY0, 18); T.pinta(g, '#101C32', 5);
+  }
+
+  function medidor(g, e, vis) {
+    const h = MY1 - MY0, zona = NIV[e.nivel].zona;
+    const objetivo = e.clavos[Math.min(e.activa, e.clavos.length - 1)];
+    const ty = MY1 - objetivo * h, cy = MY1 - e.fuerza * h;
+    g.save(); T.rr(g, MX - 18, MY0, 36, h, 18); g.clip();
+    g.fillStyle = T.ROJO; g.fillRect(MX - 18, cy, 36, MY1 - cy);
+    g.fillStyle = C.amarillo; g.globalAlpha = 0.9; g.fillRect(MX - 18, ty - zona * h, 36, zona * h * 2);
+    g.restore();
+    T.rr(g, MX - 18, MY0, 36, h, 18); T.linea(g, 5);
+    // la marca buena: una estrella al lado
+    T.estrella(g, MX + 62, ty, 22 + Math.sin(vis.t * 0.2) * 2, 10, 5, -0.3); T.pinta(g, C.amarillo, 5);
+    g.beginPath(); g.moveTo(MX + 22, ty); g.lineTo(MX + 38, ty); T.linea(g, 6, C.amarillo);
+    // el cursor
+    T.vol(g, c => T.poli(c, [[MX - 22, cy], [MX - 56, cy - 18], [MX - 56, cy + 18]]), T.PAPEL, { dx: 0, dy: 4, w: 5 });
+  }
+
+  function clavo(g, x, hundido, activo) {
+    const top = hundido ? 628 : 560;
+    T.tubo(g, c => { c.beginPath(); c.moveTo(x, top + 8); c.lineTo(x, 640); }, C.metal, 14, 5);
+    T.vol(g, c => T.rr(c, x - 30, top - 8, 60, 18, 8), hundido ? C.verde : C.metal, { sombra: hundido ? T.oscuro(C.verde) : C.metalS, dx: 0, dy: -6, w: 5 });
+    if (activo) { T.poli(g, [[x, top - 28], [x - 16, top - 56], [x + 16, top - 56]]); T.pinta(g, C.amarillo, 5); }
+  }
+
+  function martillo(g, x, fuerza, golpe) {
+    const px = x + 250, py = 596, a = golpe ? 0.02 : 0.2 + fuerza * 0.95;
+    g.save(); g.translate(px, py); g.rotate(a);
+    T.vol(g, c => T.rr(c, -250, -13, 270, 26, 12), C.madera, { sombra: C.maderaS, dx: 0, dy: -8, w: 6 });
+    T.vol(g, c => T.rr(c, -292, -52, 84, 96, 14), C.metal, { sombra: C.metalS, dx: -10, dy: 0, w: 7 });
+    T.rr(g, -292, 30, 84, 14, 6); T.pinta(g, C.metalS, 5);
+    g.restore();
+    // la mano
+    T.vol(g, c => T.rr(c, px + 14, py - 30, 120, 74, 20), T.AMARILLO, { dx: 0, dy: -10, w: 6 });
+    T.vol(g, c => T.circ(c, px, py, 36), '#FFD2A6', { sombra: '#E0A070', dx: -8, dy: -6, w: 6 });
+    g.beginPath(); for (const d of [-14, 0, 14]) { g.moveTo(px - 26, py + d); g.lineTo(px - 6, py + d); } T.linea(g, 4, '#B9764A');
   }
 
   function dibuja(g, e, vis) {
     T.capa(g, vis, 'bricolaje', fondo);
-    medidor(g, e);
-    T.texto(g, e.clavos.length > 1 ? 'CLAVA LOS DOS CLAVOS' : 'UN GOLPE, EN EL MOMENTO JUSTO', 320, 535, 22, { color: T.PAPEL, fuente: T.F_UI, peso: 900, w: 3 });
-    T.vol(g, c => T.rr(c, 73, 605, 494, 126, 20), C.madera, { sombra: C.maderaS, dx: 0, dy: 10, w: 7 });
-    T.rr(g, 93, 622, 454, 12, 6); T.pinta(g, '#D99560', 0);
-    const sep = e.clavos.length > 1 ? [255, 390] : [320];
-    for (let i = 0; i < e.clavos.length; i++) {
-      const x = sep[i], clavado = i < e.activa;
-      T.tubo(g, c => { c.moveTo(x, 623); c.lineTo(x, clavado ? 683 : 706); }, C.metal, 12, 4);
-      T.vol(g, c => T.rr(c, x - 23, 615, 46, 15, 7), clavado ? C.verde : C.metal, { sombra: C.metalS, dx: -3, dy: -3, w: 3 });
-      if (i === e.activa && !e.resuelto) T.circ(g, x, 686, 7), T.pinta(g, C.amarillo, 0);
-    }
-    martillo(g, 495, 565, e.cool > 5);
-    T.texto(g, e.activa >= e.clavos.length ? '¡TRABAJO HECHO!' : 'TOCA PARA GOLPEAR', 320, 793, 23, { color: C.amarillo, fuente: T.F_UI, peso: 900, w: 4 });
-    vis.ch.dibuja(g, 0); vis.ch.dibuja(g, 1);
+    medidor(g, e, vis);
+    const xs = e.clavos.length > 1 ? [250, 400] : [330];
+    // el listón
+    T.vol(g, c => T.rr(c, 140, 636, 380, 44, 8), '#E2A46C', { sombra: C.madera, dx: 0, dy: 12, w: 6 });
+    for (let i = 0; i < e.clavos.length; i++) clavo(g, xs[i], i < e.activa, i === e.activa && !e.resuelto && e.cool === 0);
+    vis.ch.dibuja(g, 0);
+    const ix = Math.min(e.cool > 4 ? Math.max(0, e.activa - 1) : e.activa, xs.length - 1);
+    martillo(g, xs[ix], e.fuerza, e.cool > 4);
+    vis.ch.dibuja(g, 1);
   }
 
   function efectos(e, vis, ev, son) {
     for (const x of ev) if (x.t === 'golpe') {
-      T.estrellas(vis.ch, 320, 594, x.bueno ? 9 : 4, x.bueno ? T.AMARILLO : T.PAPEL, 10, x.bueno ? 22 : 14, 1);
-      T.palabra(vis.ch, x.bueno ? '¡CLAVADO!' : x.pts ? '¡CASI!' : '¡FLOJO!', 320, 165, x.bueno ? T.AMARILLO : T.PAPEL, 46, 1);
+      vis.temblor = x.bueno ? 10 : 6; T.rayitas(vis.ch, 330, 600, 7, T.PAPEL, 30, 36, 1); T.estrellas(vis.ch, 330, 594, x.bueno ? 9 : 4, x.bueno ? T.AMARILLO : T.PAPEL, 10, x.bueno ? 22 : 14, 1);
+      T.palabra(vis.ch, x.bueno ? '¡CLAVADO!' : x.pts ? '¡CASI!' : x.fuerte ? '¡QUÉ BESTIA!' : '¡FLOJO!', 320, 165, x.bueno ? T.AMARILLO : T.PAPEL, 46, 1);
       son && (x.bueno ? son.clavado() : son.golpe());
     }
   }
 
   ZZ.canales.bricolaje = {
     id: 'bricolaje', num: 6, nombre: 'BRICOLAJE', orden: '¡CLAVA!',
-    pista: 'Toca cuando el cursor coincida con la marca dorada',
+    pista: 'Toca cuando la fuerza llegue a la estrella',
     rotulo: 'TALLER EN DIRECTO: «GOLPE SECO»',
     color: C.fondo, color2: C.madera, color3: T.AMARILLO,
     animo: x => x.t === 'golpe' ? (x.pts >= 350 ? 1 : -1) : 0,
@@ -2629,64 +2688,113 @@
     return n === mem.paso ? [{ t: 'd', x: 320, y: 500 }] : [];
   }
 
+  function hoja(g, x, y, r, rot, color) {
+    g.save(); g.translate(x, y); g.rotate(rot);
+    T.vol(g, c => { c.beginPath(); c.moveTo(-r, 0); c.quadraticCurveTo(0, -r * 0.62, r, 0); c.quadraticCurveTo(0, r * 0.62, -r, 0); c.closePath(); }, color, { sombra: T.oscuro(color, 0.3), dx: 0, dy: -8, w: 6 });
+    g.beginPath(); g.moveTo(-r * 0.8, 0); g.lineTo(r * 0.8, 0); T.linea(g, 4, T.oscuro(color, 0.4));
+    g.restore();
+  }
   function fondo(g) {
-    g.fillStyle = C.fondo; g.fillRect(0, 0, ZZ.PW, ZZ.PH);
-    g.fillStyle = T.trama(g, C.fondoS, 18, 3); g.fillRect(0, 0, ZZ.PW, ZZ.PH);
-    T.texto(g, 'DOCUMENTAL', 320, 82, 43, { color: T.PAPEL, w: 9 });
-    T.texto(g, '¡ATRAPA!', 320, 140, 70, { color: T.AMARILLO, w: 11 });
-    for (const [x, y, r] of [[70, 220, 70], [555, 270, 90], [84, 520, 80], [566, 570, 70]]) {
-      T.vol(g, c => T.elip(c, x, y, r, r * 0.42, -0.4), C.hoja, { sombra: C.fondoS, dx: -6, dy: -8, w: 5 });
+    // selva al atardecer, en franjas
+    const fr = ['#1D5F58', '#2A7F62', '#3D9B6B', '#7CC27A'];
+    fr.forEach((c, i) => { g.fillStyle = c; g.fillRect(0, i * 160, ZZ.PW, 170); if (i) { g.fillStyle = T.trama(g, fr[i - 1], 11, 3); g.fillRect(0, i * 160, ZZ.PW, 30); } });
+    T.vol(g, c => T.circ(c, 500, 190, 70), '#FFE48A', { sombra: T.AMARILLO, dx: -8, dy: -8, w: 6 });
+    // juncos
+    for (const [x, h, s] of [[44, 330, 1], [92, 250, -1], [560, 300, 1], [604, 220, -1]]) {
+      T.tubo(g, c => { c.beginPath(); c.moveTo(x, 700); c.quadraticCurveTo(x + s * 18, 700 - h / 2, x + s * 6, 700 - h); }, C.fondoS, 9, 4);
+      g.save(); g.translate(x + s * 6, 700 - h); g.rotate(s * 0.06);
+      T.vol(g, c => T.rr(c, -13, -64, 26, 70, 13), '#8A5A32', { sombra: '#5E3A1C', dx: -6, dy: 0, w: 5 });
+      g.restore();
     }
-    T.vol(g, c => T.rr(c, 0, 742, 640, 140, 0), C.fondoS, { sombra: '#12382F', dx: 0, dy: 10, w: 0 });
+    // el agua
+    T.vol(g, c => T.rr(c, -20, 660, 680, 220, 0), '#2D9CB8', { sombra: '#1B6F8C', dx: 0, dy: 40, w: 7 });
+    g.beginPath();
+    for (const [x, y, l] of [[40, 706, 90], [470, 716, 120], [150, 800, 110], [420, 806, 150]]) { g.moveTo(x, y); g.quadraticCurveTo(x + l / 2, y - 9, x + l, y); }
+    T.linea(g, 5, '#8FE0EC');
+    // hojas colgando y nenúfar
+    hoja(g, 60, 120, 110, 0.5, C.hoja); hoja(g, 200, 70, 90, 0.15, '#2E9C66'); hoja(g, 600, 400, 80, -0.9, C.hoja);
+    T.vol(g, c => T.elip(c, 320, 742, 210, 52), C.hoja, { sombra: C.ranaS, dx: 0, dy: 12, w: 7 });
+    T.poli(g, [[320, 742], [500, 700], [540, 742]]); T.pinta(g, '#2D9CB8', 0);
+    // visor de cámara
+    g.globalAlpha = 0.85;
+    for (const [x, y, sx, sy] of [[34, 200, 1, 1], [606, 200, -1, 1], [34, 630, 1, -1], [606, 630, -1, -1]]) {
+      g.beginPath(); g.moveTo(x, y + sy * 44); g.lineTo(x, y); g.lineTo(x + sx * 44, y); T.linea(g, 6, T.PAPEL);
+    }
+    g.globalAlpha = 1;
   }
 
   function rana(g, e, vis) {
-    T.vol(g, c => T.rr(c, 225, 585, 190, 145, 68), C.rana, { sombra: C.ranaS, dx: -10, dy: -12, w: 8 });
-    for (const x of [265, 375]) {
-      T.vol(g, c => T.circ(c, x, 578, 36), C.rana, { sombra: C.ranaS, dx: -7, dy: -8, w: 7 });
-      T.circ(g, x, 574, 12); T.pinta(g, T.TINTA, 0);
+    const abre = vis.lengua > vis.t, m = e.moscaPos, t = vis.t;
+    const resp = Math.sin(t * 0.12) * 4;
+    // patas
+    for (const s of [-1, 1]) {
+      T.vol(g, c => T.elip(c, 320 + s * 112, 716, 54, 30, s * 0.3), C.rana, { sombra: C.ranaS, dx: 0, dy: -8, w: 7 });
+      T.vol(g, c => T.elip(c, 320 + s * 60, 738, 30, 16), C.rana, { sombra: C.ranaS, dx: 0, dy: -5, w: 6 });
     }
-    T.elip(g, 320, 655, 58, 24); T.pinta(g, '#1C503B', 6);
-    if (vis.lengua > vis.t) {
-      const p = e.moscaPos || { x: 320, y: 390 };
-      T.tubo(g, c => { c.moveTo(320, 652); c.lineTo(p.x, p.y); }, T.ROJO, 12, 5);
+    T.vol(g, c => T.rr(c, 216, 590 - resp, 208, 150 + resp, 72), C.rana, { sombra: C.ranaS, dx: -12, dy: -12, w: 8 });
+    T.elip(g, 320, 706, 66, 30); T.pinta(g, '#C9F2A6', 0);
+    // ojos que siguen a la mosca
+    const mira = m && !e.atrapada ? ZZ.lim((m.x - 320) / 320, -1, 1) : 0;
+    for (const x of [262, 378]) {
+      T.vol(g, c => T.circ(c, x, 584 - resp, 40), C.rana, { sombra: C.ranaS, dx: -7, dy: -8, w: 7 });
+      T.circ(g, x, 580 - resp, 24); T.pinta(g, '#FFFFFF', 5);
+      T.circ(g, x + mira * 10, 574 - resp, 11); T.pinta(g, T.TINTA, 0);
+    }
+    for (const x of [248, 392]) { T.circ(g, x, 660, 13); T.pinta(g, '#FF9FA8', 0); }
+    if (abre) {
+      const p = vis.lenguaP || { x: 320, y: 340 };
+      T.elip(g, 320, 656, 50, 30); T.pinta(g, '#7A1F33', 6);
+      T.tubo(g, c => { c.beginPath(); c.moveTo(320, 656); c.lineTo(p.x, p.y); }, '#FF6B81', 16, 5);
+      T.circ(g, p.x, p.y, 18); T.pinta(g, '#FF6B81', 5);
+    } else {
+      g.beginPath(); g.moveTo(266, 648); g.quadraticCurveTo(320, 682, 374, 648); T.linea(g, 6);
     }
   }
 
   function mosca(g, p, t) {
     g.save(); g.translate(p.x, p.y); g.rotate(Math.sin(t * 0.12) * 0.18);
-    T.vol(g, c => T.elip(c, 0, 0, 19, 14), T.TINTA, { sombra: '#000000', dx: -4, dy: -5, w: 4 });
-    for (const dx of [-18, 18]) { T.elip(g, dx, -15, 24, 12, dx < 0 ? -0.4 : 0.4); T.pinta(g, C.ala, 4); }
-    T.circ(g, -6, -3, 4); T.circ(g, 6, -3, 4); T.pinta(g, T.ROJO, 0);
+    const al = Math.sin(t * 1.4) * 0.35;
+    for (const s of [-1, 1]) { T.elip(g, s * 20, -18, 28, 13, s * (0.5 + al)); T.pinta(g, C.ala, 4); }
+    T.vol(g, c => T.elip(c, 0, 0, 24, 18), '#3A3550', { sombra: T.TINTA, dx: -4, dy: -5, w: 5 });
+    for (const s of [-1, 1]) { T.circ(g, s * 9, -6, 8); T.pinta(g, T.ROJO, 3); }
     g.restore();
   }
 
   function avispa(g, p, t) {
     g.save(); g.translate(p.x, p.y); g.rotate(Math.sin(t * 0.13) * 0.12);
-    T.vol(g, c => T.elip(c, 0, 0, 24, 15), C.avispa, { sombra: '#C88D13', dx: -5, dy: -5, w: 5 });
-    for (const dx of [-9, 9]) { g.beginPath(); g.moveTo(dx, -6); g.lineTo(dx + 7, 8); T.linea(g, 7, T.TINTA); }
-    for (const dx of [-22, 22]) { T.elip(g, dx, -18, 22, 10, dx < 0 ? -0.4 : 0.4); T.pinta(g, C.ala, 4); }
+    const al = Math.sin(t * 1.5) * 0.3;
+    for (const s of [-1, 1]) { T.elip(g, s * 16, -22, 26, 11, s * (0.5 + al)); T.pinta(g, C.ala, 4); }
+    T.poli(g, [[-34, -4], [-58, 4], [-34, 10]]); T.pinta(g, T.TINTA, 0);
+    T.vol(g, c => T.elip(c, 0, 0, 34, 20), C.avispa, { sombra: '#C88D13', dx: -5, dy: -5, w: 5 });
+    g.save(); T.elip(g, 0, 0, 34, 20); g.clip(); g.fillStyle = T.TINTA; for (const x of [-18, -2, 14]) g.fillRect(x, -24, 8, 48); g.restore();
+    T.circ(g, 26, -6, 6); T.pinta(g, T.ROJO, 3);
+    g.beginPath(); g.moveTo(18, -16); g.lineTo(34, -12); T.linea(g, 4);
     g.restore();
   }
 
   function dibuja(g, e, vis) {
     T.capa(g, vis, 'documental', fondo);
     const m = e.moscaPos, a = e.avispaPos;
+    // la franja donde llega la lengua
+    g.globalAlpha = 0.16; g.fillStyle = '#FFFFFF'; g.fillRect(320 - 60, 200, 120, 380); g.globalAlpha = 1;
+    vis.ch.dibuja(g, 0);
+    rana(g, e, vis);
     if (m && m.x > -90 && m.x < 730 && !e.atrapada) mosca(g, m, vis.t);
     if (a && a.x > -90 && a.x < 730 && !e.fallo) avispa(g, a, vis.t);
-    rana(g, e, vis);
-    T.texto(g, e.nivel === 3 ? 'MOSCA · ¡CUIDADO CON LA AVISPA!' : 'TOCA CUANDO PASE FRENTE A LA RANA', 320, 790, e.nivel === 3 ? 19 : 22, { color: T.PAPEL, fuente: T.F_UI, peso: 900, w: 4 });
-    vis.ch.dibuja(g, 0); vis.ch.dibuja(g, 1);
+    vis.ch.dibuja(g, 1);
   }
 
   function efectos(e, vis, ev, son) {
     for (const x of ev) {
       if (x.t === 'atrapa') {
-        vis.lengua = vis.t + 9;
+        vis.lengua = vis.t + 12; vis.lenguaP = { x: x.x, y: x.y }; vis.parada = 2;
         T.estrellas(vis.ch, x.x, x.y, x.pts >= 700 ? 10 : 5, T.AMARILLO, 11, 22, 1);
         T.palabra(vis.ch, x.pts >= 700 ? '¡DELICIOSO!' : '¡A LA LENGUA!', 320, 160, T.AMARILLO, 42, 1);
         son && (x.pts >= 700 ? son.acierto() : son.golpe());
+      } else if (x.t === 'aire') {
+        vis.lengua = vis.t + 7; vis.lenguaP = { x: 320, y: 340 }; son && son.golpe();
       } else if (x.t === 'avispa') {
+        vis.lengua = vis.t + 12; vis.lenguaP = { x: x.x, y: x.y };
         T.palabra(vis.ch, '¡ESA NO!', 320, 160, T.ROJO, 52, 1); vis.temblor = 12; son && son.fallo();
       } else if (x.t === 'pasa') {
         T.palabra(vis.ch, '¡SE ESCAPA!', 320, 160, T.PAPEL, 46, 1); son && son.fallo();
@@ -2706,21 +2814,33 @@
 //# sourceURL=zz/canales/documental.js
 </script>
 <script>
-/* ZikZak · canal 8 · Musical · ¡A TODO VOLUMEN!
-   Sigue los pulsos de la cabina. Si aparece PAUSA, escucha y no toques. */
+/* ZikZak · canal 8 · Musical · ¡AL RITMO!
+   Dura diez segundos. Las notas corren por el carril hacia el aro: se toca cuando cada una lo cruza.
+   Las notas tachadas no se tocan. Mide el oído: cuenta lo poco que te desvías en cada golpe. */
 (function () {
   'use strict';
   const ZZ = window.ZZ, T = ZZ.tinta;
 
   const NIV = [null,
-    { tiempos: [48, 96, 144, 192], tol: 14, pausa: -1 },
-    { tiempos: [42, 78, 114, 150], tol: 12, pausa: 1 },
-    { tiempos: [38, 66, 108, 136], tol: 9, pausa: 2 }];
+    { n: 8, ini: 96, pasos: [60], tol: 14, pausas: 0 },
+    { n: 10, ini: 84, pasos: [48], tol: 12, pausas: 2 },
+    { n: 12, ini: 60, pasos: [42, 42, 28, 56], tol: 10, pausas: 2 }];
   const C = { fondo: '#11162F', noche: '#090D20', panel: '#22294B', tinta: '#111222', crema: '#FFF2D2', lima: '#D7FF57', rosa: '#FF4F9A', cyan: '#57E7F2', naranja: '#FFB347', violeta: '#8A70FF' };
+  const X0 = 150, PY = 228, V = 3.4;      // el aro, la altura del carril y lo que corre una nota por paso
 
   function init(semilla, nivel) {
-    const rng = ZZ.azar(semilla), N = NIV[nivel], variacion = nivel === 3 ? rng.entero(-2, 2) : 0;
-    const beats = N.tiempos.map((n, i) => ({ n: n + (i ? variacion : 0), pausa: i === N.pausa, estado: 'pendiente', pts: 0 }));
+    const rng = ZZ.azar(semilla), N = NIV[nivel];
+    const giro = rng.entero(0, N.pasos.length - 1), pausas = [];
+    while (pausas.length < N.pausas) {
+      const i = rng.entero(2, N.n - 1);
+      if (pausas.every(p => Math.abs(p - i) > 1)) pausas.push(i);
+    }
+    const beats = [];
+    let n = N.ini;
+    for (let i = 0; i < N.n; i++) {
+      beats.push({ n, pausa: pausas.indexOf(i) >= 0, estado: 'pendiente', pts: 0 });
+      n += N.pasos[(i + giro) % N.pasos.length];
+    }
     return { semilla, nivel, beats, tol: N.tol, sig: 0, suma: 0, errores: 0, aciertosMax: beats.filter(b => !b.pausa).length, espera: 0, hecho: false, ev: [] };
   }
 
@@ -2733,7 +2853,7 @@
         const d = Math.abs(n - b.n);
         if (b.estado === 'pendiente' && d <= e.tol * 2 && d < distancia) { mejor = b; distancia = d; }
       }
-      if (!mejor) continue;
+      if (!mejor) { e.ev.push({ t: 'aire' }); continue; }
       if (mejor.pausa) {
         mejor.estado = 'error'; e.errores++; e.ev.push({ t: 'error' });
       } else {
@@ -2750,12 +2870,18 @@
     if (e.sig >= e.beats.length && ++e.espera > 32) e.hecho = true;
   }
 
+  // Tocar una nota tachada cuesta casi lo que vale un golpe perfecto.
   function puntuacion(e) {
-    return ZZ.lim(Math.round((e.suma - e.errores * 220) / e.aciertosMax), 0, 1000);
+    return ZZ.lim(Math.round((e.suma - e.errores * 800) / e.aciertosMax), 0, 1000);
   }
 
+  // Jugador de la casa: se desvía más o menos, y si es flojo se salta notas y pica en las tachadas.
   function casa(e, mem, rng, d, n) {
-    if (!mem.plan) mem.plan = e.beats.map(b => b.pausa ? null : b.n + Math.round(rng.campana() * ZZ.mix(8, 1, d)));
+    if (!mem.plan) mem.plan = e.beats.map(b => {
+      const j = Math.round(rng.campana() * ZZ.mix(14, 1.5, d)), az = rng();
+      if (b.pausa) return az < ZZ.mix(0.3, 0, Math.min(1, d * 1.3)) ? b.n + j : null;
+      return az < ZZ.mix(0.18, 0, d) ? null : b.n + j;
+    });
     for (let i = 0; i < e.beats.length; i++) {
       if (mem.plan[i] === n && e.beats[i].estado === 'pendiente') return [{ t: 'd', x: 320, y: 650 }];
     }
@@ -2772,33 +2898,40 @@
       T.circ(g, x, y, r); T.pinta(g, c, 0);
     }
     T.vol(g, c => T.rr(c, 0, 692, 640, 170, 0), '#17142D', { sombra: C.noche, dx: 0, dy: 8, w: 0 });
-    T.texto(g, 'RADIO RELÁMPAGO', 320, 70, 27, { color: C.cyan, fuente: T.F_UI, peso: 900, w: 0 });
-    T.texto(g, '¡A TODO VOLUMEN!', 320, 125, 46, { color: C.crema, w: 8 });
   }
 
-  function lineaRitmo(g, e, vis) {
-    const x0 = 89, x1 = 551, y = 260, ancho = x1 - x0;
-    T.vol(g, c => T.rr(c, 48, 191, 544, 142, 24), C.panel, { sombra: C.noche, dx: 0, dy: 9, w: 5 });
-    T.texto(g, 'SIGUE LA SECUENCIA', 320, 215, 17, { color: C.crema, fuente: T.F_UI, peso: 900, w: 0 });
-    g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); T.linea(g, 8, '#525579');
-    const primero = e.beats[0].n - 22, ultimo = e.beats[e.beats.length - 1].n + 24;
-    const avance = ZZ.lim((vis.n - primero) / (ultimo - primero), 0, 1);
-    g.beginPath(); g.moveTo(x0, y); g.lineTo(x0 + avance * ancho, y); T.linea(g, 8, C.cyan);
-    for (let i = 0; i < e.beats.length; i++) {
-      const b = e.beats[i], x = x0 + i * ancho / (e.beats.length - 1);
-      const activa = b.estado === 'pendiente' && Math.abs(vis.n - b.n) <= e.tol * 2;
-      const color = b.estado === 'acierto' || b.estado === 'pausa' ? C.lima : b.estado === 'perdido' || b.estado === 'error' ? C.rosa : activa ? C.naranja : C.crema;
-      if (activa) { T.circ(g, x, y, 33 + Math.sin(vis.t * 0.22) * 3); T.pinta(g, color, 0); }
-      T.circ(g, x, y, activa ? 24 : 20); T.pinta(g, color, 4, C.tinta);
-      const marca = b.pausa ? 'Ⅱ' : b.estado === 'acierto' ? '✓' : b.estado === 'perdido' || b.estado === 'error' ? '×' : String(i + 1);
-      T.texto(g, marca, x, y + 1, b.pausa ? 22 : 20, { color: C.tinta, fuente: T.F_UI, peso: 900, w: 0 });
-      if (b.pausa) T.texto(g, 'PAUSA', x, 305, 13, { color: C.crema, fuente: T.F_UI, peso: 900, w: 0 });
+  function pista(g, e, vis) {
+    T.vol(g, c => T.rr(c, 30, 150, 580, 156, 26), C.panel, { sombra: C.noche, dx: 0, dy: 9, w: 6 });
+    g.save(); T.rr(g, 36, 156, 568, 144, 22); g.clip();
+    g.fillStyle = '#191B3A'; g.fillRect(36, PY - 36, 568, 72);
+    g.setLineDash([10, 14]); g.beginPath(); g.moveTo(36, PY); g.lineTo(604, PY); T.linea(g, 4, '#525579'); g.setLineDash([]);
+    let cerca = false;
+    for (const b of e.beats) {
+      const x = X0 + (b.n - vis.n) * V;
+      if (b.estado === 'acierto' || x < -30 || x > 650) continue;
+      if (b.estado === 'pendiente' && !b.pausa && Math.abs(vis.n - b.n) <= e.tol) cerca = true;
+      if (b.pausa) {
+        const mal = b.estado === 'error';
+        T.circ(g, x, PY, 25); T.pinta(g, mal ? C.rosa : C.noche, 6, mal ? C.tinta : C.rosa);
+        g.beginPath(); g.moveTo(x - 14, PY + 14); g.lineTo(x + 14, PY - 14); T.linea(g, 7, mal ? C.tinta : C.rosa);
+      } else {
+        const ida = b.estado === 'perdido';
+        T.circ(g, x, PY, 26); T.pinta(g, ida ? '#525579' : C.naranja, 6, C.tinta);
+        if (!ida) { T.circ(g, x - 9, PY - 9, 6); T.pinta(g, C.crema, 0); }
+      }
     }
+    g.restore();
+    // el aro donde se toca
+    const flash = vis.golpe !== undefined && vis.t - vis.golpe < 8;
+    const r = 38 + (flash ? 7 : cerca ? 4 : 0), color = flash ? C.lima : cerca ? C.crema : C.cyan;
+    T.circ(g, X0, PY, r); T.linea(g, 15, C.tinta);
+    T.circ(g, X0, PY, r); T.linea(g, 8, color);
+    for (const s of [-1, 1]) { T.poli(g, [[X0, PY + s * (r + 7)], [X0 - 13, PY + s * (r + 27)], [X0 + 13, PY + s * (r + 27)]]); T.pinta(g, color, 5, C.tinta); }
   }
 
   function altavoz(g, e, vis) {
     let pulso = 0;
-    for (const b of e.beats) pulso = Math.max(pulso, ZZ.lim(1 - Math.abs(vis.n - b.n) / 18, 0, 1));
+    for (const b of e.beats) if (!b.pausa) pulso = Math.max(pulso, ZZ.lim(1 - Math.abs(vis.n - b.n) / 18, 0, 1));
     // Ondas que saltan con cada pulso.
     for (let i = 0; i < 3; i++) {
       g.beginPath(); g.arc(320, 504, 128 + i * 12 + pulso * 4, -2.55, -0.58); T.linea(g, 5, i % 2 ? C.rosa : C.cyan);
@@ -2827,11 +2960,8 @@
 
   function dibuja(g, e, vis) {
     T.capa(g, vis, 'musical', fondo);
-    lineaRitmo(g, e, vis); altavoz(g, e, vis);
-    const actual = e.beats[e.sig];
-    const texto = actual ? (actual.pausa ? 'PAUSA: ¡NO TOQUES!' : 'TOCA AL OÍR EL BOM') : '¡SECUENCIA COMPLETA!';
-    T.vol(g, c => T.rr(c, 68, 730, 504, 65, 24), C.lima, { sombra: '#789A29', dx: 0, dy: 7, w: 5 });
-    T.texto(g, texto, 320, 761, 21, { color: C.tinta, fuente: T.F_UI, peso: 900, w: 0 });
+    pista(g, e, vis);
+    g.save(); g.translate(0, 40); altavoz(g, e, vis); g.restore();
     vis.ch.dibuja(g, 0); vis.ch.dibuja(g, 1);
   }
 
@@ -2839,413 +2969,30 @@
     for (const x of ev) {
       if (x.t === 'aviso') { if (!x.pausa && son) son.tic(); }
       else if (x.t === 'golpe') {
-        T.estrellas(vis.ch, 320, 505, x.bueno ? 10 : 5, x.bueno ? C.lima : C.crema, 11, x.bueno ? 23 : 14, 1);
-        T.palabra(vis.ch, x.bueno ? '¡EN EL BOM!' : '¡CASI!', 320, 158, x.bueno ? C.lima : C.crema, 43, 1);
+        vis.golpe = vis.t;
+        T.estrellas(vis.ch, X0, PY, x.bueno ? 8 : 4, x.bueno ? C.lima : C.crema, 10, x.bueno ? 20 : 13, 1);
+        if (x.bueno) vis.ch.mas({ tipo: 'anillo', x: X0, y: PY, r: 30, R: 110, w: 10, color: C.lima, vida: 12, capa: 1 });
+        T.palabra(vis.ch, x.bueno ? '¡BOM!' : x.pts >= 350 ? '¡CASI!' : '¡UY!', 330, 342, x.bueno ? C.lima : C.crema, 40, 1);
         son && (x.bueno ? son.acierto() : son.golpe());
       } else if (x.t === 'pierde') {
-        T.palabra(vis.ch, '¡SE ESCAPÓ!', 320, 158, C.rosa, 40, 1); son && son.fallo();
+        T.palabra(vis.ch, '¡SE FUE!', 330, 342, C.rosa, 38, 1); son && son.fallo();
       } else if (x.t === 'error') {
-        T.palabra(vis.ch, '¡ERA PAUSA!', 320, 158, C.rosa, 40, 1); son && son.fallo();
+        vis.temblor = 8; T.palabra(vis.ch, '¡ESA NO!', 330, 342, C.rosa, 40, 1); son && son.fallo();
       }
     }
   }
 
   ZZ.canales.musical = {
-    id: 'musical', num: 8, nombre: 'MUSICAL', orden: '¡A TODO VOLUMEN!',
-    pista: 'Sigue los pulsos y no toques durante la pausa',
+    id: 'musical', num: 8, nombre: 'MUSICAL', orden: '¡AL RITMO!',
+    pista: 'Toca cuando cada nota cruce el aro. Las tachadas, no',
     rotulo: 'RADIO RELÁMPAGO: «EL BOM PERFECTO»',
     color: '#222052', color2: C.rosa, color3: C.lima,
+    pasos: 600,      // diez segundos
     animo: x => x.t === 'golpe' ? (x.pts >= 350 ? 1 : -1) : x.t === 'pierde' || x.t === 'error' ? -1 : 0,
     init, paso, puntuacion, casa, dibuja, efectos,
   };
 })();
 //# sourceURL=zz/canales/musical.js
-</script>
-<script>
-/* ZikZak · canal nuevo · Burbujas · ¡PLIP!
-   Una burbuja asciende hacia un aro. Toca justo cuando lo atraviese. */
-(function () {
-  'use strict';
-  const ZZ = window.ZZ, T = ZZ.tinta;
-
-  const NIV = [null,
-    { vel: 2.55, amp: 24, freq: 0.035, tol: 82, cantidad: 1, intervalo: 0 },
-    { vel: 3.35, amp: 52, freq: 0.045, tol: 66, cantidad: 1, intervalo: 0 },
-    { vel: 4.15, amp: 70, freq: 0.052, tol: 54, cantidad: 2, intervalo: 112 }];
-  const C = { fondo: '#173D63', profundo: '#102B49', agua: '#2A7391', aro: '#FFE08A', burbuja: '#9DEBEB', brillo: '#F5FFFF', rosa: '#F6A7D5' };
-  const ARO = { x: 320, y: 410 };
-
-  function posicion(e, b, n) {
-    if (n < b.inicio) return null;
-    const N = NIV[e.nivel], t = n - b.inicio;
-    return { x: 320 + Math.sin(t * N.freq + b.fase) * N.amp, y: 735 - t * N.vel, t };
-  }
-
-  function init(semilla, nivel) {
-    const rng = ZZ.azar(semilla), N = NIV[nivel], burbujas = [];
-    for (let i = 0; i < N.cantidad; i++) burbujas.push({ inicio: i * N.intervalo, fase: rng.entre(-1.5, 1.5), estado: 'sube', pts: 0, pos: null });
-    return { semilla, nivel, burbujas, activa: 0, suma: 0, resueltas: 0, espera: 0, hecho: false, ev: [] };
-  }
-
-  function puntuar(b, p, nivel) {
-    const distancia = Math.hypot(p.x - ARO.x, p.y - ARO.y);
-    return ZZ.lim(Math.round((1 - distancia / NIV[nivel].tol) * 1000), 0, 1000);
-  }
-
-  function paso(e, entradas, n) {
-    for (const b of e.burbujas) if (b.estado === 'sube') b.pos = posicion(e, b, n);
-    const b = e.burbujas[e.activa];
-    if (b && b.estado === 'sube' && b.pos) {
-      for (const en of entradas) {
-        if (en.t !== 'd') continue;
-        const pts = puntuar(b, b.pos, e.nivel);
-        if (pts > 0) {
-          b.estado = 'pop'; b.pts = pts; e.suma += pts; e.resueltas++; e.ev.push({ t: 'pop', x: b.pos.x, y: b.pos.y, pts });
-        } else e.ev.push({ t: 'aire' });
-        break;
-      }
-      if (b.estado === 'sube' && b.pos.y < 250) {
-        b.estado = 'perdida'; e.resueltas++; e.ev.push({ t: 'pierde' });
-      }
-      if (b.estado !== 'sube') {
-        e.activa++;
-        if (e.resueltas >= e.burbujas.length) e.espera = 1;
-      }
-    }
-    if (e.espera > 0 && ++e.espera > 34) e.hecho = true;
-  }
-
-  function puntuacion(e) {
-    return e.burbujas.length ? ZZ.lim(Math.round(e.suma / e.burbujas.length), 0, 1000) : 0;
-  }
-
-  function casa(e, mem, rng, d, n) {
-    if (mem.objetivo !== e.activa) {
-      mem.objetivo = e.activa; mem.paso = -1;
-      const b = e.burbujas[e.activa];
-      if (b) {
-        let mejor = 1e9;
-        for (let i = Math.max(n + 1, b.inicio); i < ZZ.PASOS - 3; i++) {
-          const p = posicion(e, b, i), err = Math.hypot(p.x - ARO.x, p.y - ARO.y);
-          if (err < mejor) { mejor = err; mem.paso = i; }
-        }
-        mem.paso = ZZ.lim(mem.paso + Math.round(rng.campana() * ZZ.mix(22, 3, d)), n + 1, ZZ.PASOS - 2);
-      }
-    }
-    return n === mem.paso ? [{ t: 'd', x: 320, y: 410 }] : [];
-  }
-
-  function fondo(g) {
-    g.fillStyle = C.fondo; g.fillRect(0, 0, ZZ.PW, ZZ.PH);
-    g.fillStyle = T.trama(g, C.profundo, 22, 3); g.fillRect(0, 0, ZZ.PW, ZZ.PH);
-    for (const [x, y, r] of [[82, 250, 6], [550, 330, 10], [110, 540, 9], [522, 660, 5], [460, 230, 4]]) {
-      T.circ(g, x, y, r); T.pinta(g, '#91DDE1', 0);
-    }
-    T.texto(g, 'BURBUJAS', 320, 82, 46, { color: T.PAPEL, w: 8 });
-    T.texto(g, '¡PLIP!', 320, 145, 70, { color: C.aro, w: 10 });
-    T.vol(g, c => T.rr(c, 0, 744, 640, 130, 0), C.agua, { sombra: C.profundo, dx: 0, dy: 10, w: 0 });
-    T.rr(g, 0, 744, 640, 10, 0); T.pinta(g, '#56A8B0', 0);
-  }
-
-  function aro(g, vis) {
-    const pulso = Math.sin(vis.t * 0.12) * 3;
-    g.beginPath(); g.arc(ARO.x, ARO.y, 76 + pulso, 0, Math.PI * 2); T.linea(g, 9, C.aro);
-    g.beginPath(); g.arc(ARO.x, ARO.y, 62 + pulso, 0, Math.PI * 2); T.linea(g, 2, '#FFFFFF');
-    T.circ(g, ARO.x, ARO.y, 5); T.pinta(g, C.aro, 0);
-  }
-
-  function dibujaBurbuja(g, p, t, indice) {
-    const r = 43 + Math.sin(t * 0.08 + indice) * 2, color = indice % 2 ? C.rosa : C.burbuja;
-    g.save(); g.globalAlpha = 0.78;
-    T.circ(g, p.x, p.y, r); T.pinta(g, color, 4);
-    g.globalAlpha = 0.96;
-    T.elip(g, p.x - 13, p.y - 18, 13, 7, -0.45); T.pinta(g, C.brillo, 0);
-    T.circ(g, p.x + 18, p.y + 17, 4); T.pinta(g, C.brillo, 0);
-    g.restore();
-  }
-
-  function dibuja(g, e, vis) {
-    T.capa(g, vis, 'burbujas', fondo);
-    aro(g, vis);
-    for (let i = 0; i < e.burbujas.length; i++) {
-      const b = e.burbujas[i];
-      if (b.estado === 'sube' && b.pos && b.pos.y > 180 && b.pos.y < 790) dibujaBurbuja(g, b.pos, vis.t, i);
-    }
-    T.texto(g, e.burbujas.length > 1 ? '¡ATRAVIESA EL ARO DOS VECES!' : 'TOCA CUANDO PASE POR EL ARO', 320, 790, 22, { color: T.PAPEL, fuente: T.F_UI, peso: 900, w: 4 });
-    vis.ch.dibuja(g, 0); vis.ch.dibuja(g, 1);
-  }
-
-  function efectos(e, vis, ev, son) {
-    for (const x of ev) {
-      if (x.t === 'pop') {
-        T.estrellas(vis.ch, x.x, x.y, x.pts >= 700 ? 10 : 5, C.aro, 10, 23, 1);
-        T.palabra(vis.ch, x.pts >= 700 ? '¡PLIP PERFECTO!' : '¡PLIP!', 320, 160, C.aro, 42, 1);
-        son && (x.pts >= 700 ? son.acierto() : son.golpe());
-      } else if (x.t === 'pierde') {
-        T.palabra(vis.ch, '¡SE ESCAPÓ!', 320, 160, T.PAPEL, 42, 1); son && son.fallo();
-      }
-    }
-  }
-
-  ZZ.canales.burbujas = {
-    id: 'burbujas', num: 9, nombre: 'BURBUJAS', orden: '¡PLIP!',
-    pista: 'Toca cuando la burbuja cruce el aro',
-    rotulo: 'ACUARIO EN DIRECTO: «EL ARO»',
-    color: C.fondo, color2: C.agua, color3: C.aro,
-    animo: x => x.t === 'pop' ? (x.pts >= 350 ? 1 : -1) : x.t === 'pierde' ? -1 : 0,
-    init, paso, puntuacion, casa, dibuja, efectos,
-  };
-})();
-//# sourceURL=zz/canales/burbujas.js
-</script>
-<script>
-/* ZikZak · canal 10 · Equilibrista · ¡QUE NO CAIGA!
-   Contrapesa una torre de cacharros disparatados sobre una bandeja bamboleante. */
-(function () {
-  'use strict';
-  const ZZ = window.ZZ, T = ZZ.tinta;
-
-  const NIV = [null,
-    { pasos: 252, empuje: 0.012, peso: 0.00015, ruido: 0.00012, limite: 0.78 },
-    { pasos: 276, empuje: 0.015, peso: 0.00027, ruido: 0.00028, limite: 0.72 },
-    { pasos: 300, empuje: 0.018, peso: 0.00042, ruido: 0.00052, limite: 0.67 }];
-  const C = { fondo: '#173653', noche: '#10263D', madera: '#E5A34B', maderaS: '#A85E37', crema: '#FFF2CC', rojo: '#EF6472', turq: '#59D6C5', violeta: '#9A80D8', amarillo: '#FFD65A' };
-
-  function init(semilla, nivel) {
-    const rng = ZZ.azar(semilla), N = NIV[nivel];
-    const objetos = [
-      { w: 105, h: 44, c: C.turq, tipo: 0, peso: 0.8 },
-      { w: 76, h: 55, c: C.rojo, tipo: 1, peso: 1.1 },
-      { w: 116, h: 38, c: C.amarillo, tipo: 2, peso: 0.7 },
-      { w: 68, h: 57, c: C.violeta, tipo: 3, peso: 1.25 },
-      { w: 92, h: 42, c: '#F4F0E8', tipo: 4, peso: 0.9 }
-    ];
-    const torre = objetos.map((o, i) => ({ ...o, lado: (rng() < 0.5 ? -1 : 1) * (0.35 + rng() * 0.65), fase: rng() * 6.28, peso: o.peso * (nivel === 3 && i % 2 === 1 ? 1.65 : 1) }));
-    return { semilla, nivel, torre, ang: 0, vel: 0, pulso: 0, puntos: 0, cuenta: 0, toques: 0, pasos: 0, caida: false, hecho: false, ev: [] };
-  }
-
-  function paso(e, entradas, n) {
-    if (e.hecho) return;
-    const N = NIV[e.nivel];
-    for (const en of entradas) if (en.t === 'd') {
-      const lado = en.x < ZZ.PW / 2 ? -1 : 1;
-      e.vel += lado * N.empuje;
-      e.toques++;
-      e.ev.push({ t: 'toque', x: en.x, lado });
-    }
-    let carga = 0;
-    for (const o of e.torre) carga += o.lado * o.peso;
-    const irregular = e.nivel === 3 ? Math.sin(n * 0.19 + e.semilla % 97) * N.ruido : 0;
-    e.vel += (carga * N.peso + irregular) - e.ang * 0.012;
-    e.vel *= 0.965;
-    e.ang += e.vel;
-    e.pulso = Math.max(-0.22, Math.min(0.22, e.pulso * 0.92 + e.ang * 0.12));
-    const inestable = Math.abs(e.ang) > N.limite;
-    if (!inestable) { e.puntos += Math.max(0, 1 - Math.abs(e.ang) / N.limite); e.cuenta++; }
-    if (inestable && !e.caida) { e.caida = true; e.ev.push({ t: 'cae', lado: Math.sign(e.ang) }); }
-    e.pasos = n;
-    if (n >= N.pasos || (e.caida && n > Math.min(N.pasos, 180))) e.hecho = true;
-  }
-
-  function puntuacion(e) {
-    const max = Math.max(1, Math.min(e.pasos, NIV[e.nivel].pasos));
-    const base = Math.round(1000 * e.puntos / max);
-    return e.toques ? ZZ.lim(base, 0, 1000) : Math.min(100, base);
-  }
-
-  function casa(e, mem, rng, d, n) {
-    if (n % 10 !== 0 || e.hecho) return [];
-    const jitter = rng.campana() * (1 - d) * 0.018;
-    return [{ t: 'd', x: e.ang + e.vel > jitter ? 100 : 540, y: 420 }];
-  }
-
-  function fondo(g) {
-    g.fillStyle = C.fondo; g.fillRect(0, 0, ZZ.PW, ZZ.PH);
-    g.fillStyle = T.trama(g, C.noche, 20, 3); g.fillRect(0, 0, ZZ.PW, ZZ.PH);
-    for (const [x, y, r] of [[75, 210, 5], [552, 250, 8], [102, 560, 7], [520, 620, 5]]) { T.circ(g, x, y, r); T.pinta(g, C.amarillo, 0); }
-    T.texto(g, 'EQUILIBRISTA', 320, 76, 43, { color: T.PAPEL, w: 7 });
-    T.texto(g, '¡QUE NO CAIGA!', 320, 137, 48, { color: C.amarillo, w: 8 });
-    T.vol(g, c => T.rr(c, 0, 735, 640, 150, 0), C.noche, { sombra: '#091521', dx: 0, dy: 10, w: 0 });
-  }
-
-  function dibujaObjeto(g, o, y, inclinacion, t) {
-    g.save(); g.translate(o.lado * 26, y); g.rotate(inclinacion * (0.16 + o.peso * 0.04) + Math.sin(t * 0.08 + o.fase) * 0.025);
-    if (o.tipo === 0) {
-      T.vol(g, c => T.rr(c, -o.w / 2, -o.h / 2, o.w, o.h, 15), o.c, { sombra: T.oscuro(o.c, 0.28), dx: -5, dy: -7, w: 5 });
-      T.rr(g, -24, -9, 48, 17, 5); T.pinta(g, C.crema, 0);
-      T.texto(g, 'SOPA', 0, 0, 13, { color: T.noche, fuente: T.F_UI, peso: 900, w: 0 });
-    } else if (o.tipo === 1) {
-      T.vol(g, c => T.elip(c, 0, -2, 35, 29), o.c, { sombra: '#A83355', dx: -4, dy: -6, w: 5 });
-      T.rr(g, -28, -35, 56, 12, 5); T.pinta(g, C.amarillo, 3);
-    } else if (o.tipo === 2) {
-      T.vol(g, c => T.rr(c, -o.w / 2, -o.h / 2, o.w, o.h, 11), o.c, { sombra: '#C99627', dx: -4, dy: -5, w: 5 });
-      for (const x of [-28, 0, 28]) { T.circ(g, x, 0, 4); T.pinta(g, C.rojo, 0); }
-    } else if (o.tipo === 3) {
-      T.vol(g, c => T.rr(c, -25, -o.h / 2, 50, o.h, 12), o.c, { sombra: '#544389', dx: -4, dy: -5, w: 5 });
-      T.rr(g, -20, -o.h / 2 - 8, 40, 12, 5); T.pinta(g, C.amarillo, 2);
-    } else {
-      T.vol(g, c => T.elip(c, 0, 0, 39, 18), o.c, { sombra: '#BBAF9A', dx: -3, dy: -4, w: 5 });
-      T.elip(g, 0, 0, 24, 8); T.pinta(g, '#B6D9E4', 0);
-    }
-    g.restore();
-  }
-
-  function dibuja(g, e, vis) {
-    T.capa(g, vis, 'equilibrista', fondo);
-    const a = ZZ.lim(e.ang, -1, 1), cx = 320, baseY = 640;
-    // Bandeja y fulcro
-    T.vol(g, c => T.poli(c, [[cx - 24, 708], [cx + 24, 708], [cx + 8, 657], [cx - 8, 657]]), C.maderaS, { dx: -3, dy: -4, w: 5 });
-    g.save(); g.translate(cx, baseY); g.rotate(a * 0.55);
-    T.vol(g, c => T.rr(c, -228, -13, 456, 28, 13), C.madera, { sombra: C.maderaS, dx: -6, dy: -8, w: 6 });
-    T.rr(g, -205, -8, 410, 5, 2); T.pinta(g, C.crema, 0);
-    for (let i = 0; i < e.torre.length; i++) dibujaObjeto(g, e.torre[i], -42 - i * 52, a, vis.t);
-    g.restore();
-    T.vol(g, c => T.rr(c, 58, 744, 220, 70, 18), C.turq, { sombra: '#2D817B', dx: -6, dy: -7, w: 5 });
-    T.texto(g, 'IZQUIERDA', 168, 779, 18, { color: T.PAPEL, fuente: T.F_UI, peso: 900, w: 0 });
-    T.vol(g, c => T.rr(c, 362, 744, 220, 70, 18), C.rojo, { sombra: '#A83355', dx: -6, dy: -7, w: 5 });
-    T.texto(g, 'DERECHA', 472, 779, 18, { color: T.PAPEL, fuente: T.F_UI, peso: 900, w: 0 });
-    T.texto(g, e.caida ? '¡VUELCO DE MENAJE!' : 'TOCA EL LADO CONTRARIO AL BALANCEO', 320, 203, 19, { color: e.caida ? C.rojo : T.PAPEL, fuente: T.F_UI, peso: 900, w: 3 });
-    vis.ch.dibuja(g, 0); vis.ch.dibuja(g, 1);
-  }
-
-  function efectos(e, vis, ev, son) {
-    for (const x of ev) if (x.t === 'cae') {
-      T.palabra(vis.ch, '¡CATAPLÚM!', 320, 270, C.amarillo, 52, 1);
-      vis.temblor = 12; vis.parada = 2; son && son.fallo();
-    } else if (x.t === 'toque') son && son.golpe();
-  }
-
-  ZZ.canales.equilibrista = {
-    id: 'equilibrista', num: 10, nombre: 'EQUILIBRISTA', orden: '¡QUE NO CAIGA!',
-    pista: 'Toca izquierda o derecha para contrapesar la torre',
-    rotulo: 'CIRCO CASERO: «PLOMO, SOPA Y PLATOS»',
-    color: C.fondo, color2: C.turq, color3: C.amarillo,
-    animo: x => x.t === 'cae' ? -1 : x.t === 'toque' ? 0.2 : 0,
-    init, paso, puntuacion, casa, dibuja, efectos,
-  };
-})();
-//# sourceURL=zz/canales/equilibrista.js
-</script>
-<script>
-/* ZikZak · canal 11 · Revoltijo · ¡A SU SITIO!
-   Clasifica objetos disparatados: una mirada, un toque y a por la siguiente. */
-(function () {
-  'use strict';
-  const ZZ = window.ZZ, T = ZZ.tinta;
-  const C = { fondo: '#31234F', noche: '#211936', tarjeta: '#FFF4D8', tinta: '#30233E', lima: '#B7EF68', rosa: '#FF8D9B', azul: '#77D9E8', oro: '#FFD36A' };
-  const RONDAS = [
-    { caja: 'LA PLAYA', bien: ['Tostada con flotador', 'Cangrejo en chanclas', 'Sombrilla con bigote'], mal: ['Pingüino con bufanda', 'Tetera en pijama', 'Calcetín de oficina'] },
-    { caja: 'EL DESAYUNO', bien: ['Cereal de calcetines', 'Huevo con peluca', 'Tostada astronauta'], mal: ['Tiburón bibliotecario', 'Botas de gelatina', 'Paraguas dormilón'] },
-    { caja: 'EL ESPACIO', bien: ['Luna con patines', 'Cohete de queso', 'Alien con maletín'], mal: ['Bañera cantante', 'Pato de ascensor', 'Brócoli motero'] },
-    { caja: 'LA ORQUESTA', bien: ['Violín de fideos', 'Platillo volador', 'Trompeta con hipo'], mal: ['Sandalia con GPS', 'Taza peluquera', 'Nube de bolsillo'] },
-    { caja: 'EL BAÑO', bien: ['Patito con corbata', 'Jabón patinador', 'Toalla vampira'], mal: ['Helado de garaje', 'Búho en bañador', 'Silla de desayuno'] },
-    { caja: 'EL JARDÍN', bien: ['Tomate con bigote', 'Regadera dragón', 'Caracol repartidor'], mal: ['Lámpara submarina', 'Queso con paraguas', 'Tren de pantuflas'] },
-  ];
-  const NIV = [null, { rondas: 5, ventana: 51, opciones: 3 }, { rondas: 6, ventana: 43, opciones: 3 }, { rondas: 6, ventana: 40, opciones: 4 }];
-
-  function mezclar(a, rng) {
-    for (let i = a.length - 1; i > 0; i--) { const j = rng.entero(0, i); [a[i], a[j]] = [a[j], a[i]]; }
-    return a;
-  }
-  function crearRonda(rng, nivel, usada) {
-    let k = rng.entero(0, RONDAS.length - 1);
-    while (usada.includes(k)) k = (k + 1) % RONDAS.length;
-    usada.push(k);
-    const r = RONDAS[k], bien = rng.entero(0, r.bien.length - 1), mal = rng.entero(0, r.mal.length - 1);
-    const cartas = [{ texto: r.bien[bien], ok: true }, { texto: r.mal[mal], ok: false }, { texto: r.mal[(mal + 1) % r.mal.length], ok: false }];
-    if (nivel === 3) cartas.push({ texto: RONDAS[(k + 2) % RONDAS.length].bien[rng.entero(0, 2)], ok: false });
-    mezclar(cartas, rng);
-    return { caja: r.caja, cartas, correcta: cartas.findIndex(x => x.ok) };
-  }
-  function init(semilla, nivel) {
-    const rng = ZZ.azar(semilla), usadas = [], N = NIV[nivel], rondas = [];
-    for (let i = 0; i < N.rondas; i++) rondas.push(crearRonda(rng, nivel, usadas));
-    return { semilla, nivel, rondas, ronda: 0, inicio: 0, ventana: N.ventana, puntos: 0, respondidas: 0, seleccion: -1, acierto: false, espera: 0, hecho: false, ev: [] };
-  }
-  function responder(e, indice, n) {
-    if (e.hecho || e.espera > 0 || indice < 0 || indice >= e.rondas[e.ronda].cartas.length) return;
-    e.seleccion = indice; e.acierto = indice === e.rondas[e.ronda].correcta;
-    const trans = ZZ.lim(1 - (n - e.inicio) / e.ventana, 0, 1);
-    const pts = e.acierto ? Math.round(650 + 350 * trans) : 0;
-    e.puntos += pts; e.respondidas++; e.espera = 5;
-    e.ev.push({ t: 'respuesta', bien: e.acierto, pts });
-  }
-  function paso(e, entradas, n) {
-    if (e.hecho) return;
-    if (e.espera > 0 && --e.espera === 0) {
-      if (e.ronda + 1 >= e.rondas.length) e.hecho = true;
-      else { e.ronda++; e.inicio = n; e.seleccion = -1; }
-    }
-    if (e.espera > 0) return;
-    if (n - e.inicio >= e.ventana) {
-      e.respondidas++; e.ev.push({ t: 'respuesta', bien: false, pts: 0, fuera: true }); e.espera = 5; return;
-    }
-    for (const en of entradas) if (en.t === 'd') {
-      const cantidad = e.rondas[e.ronda].cartas.length;
-      const indice = ZZ.lim(Math.floor(en.x / 640 * cantidad), 0, cantidad - 1);
-      responder(e, indice, n); break;
-    }
-  }
-  function puntuacion(e) { return e.respondidas ? ZZ.lim(Math.round(e.puntos / e.rondas.length), 0, 1000) : 0; }
-  function casa(e, mem, rng, d, n) {
-    if (mem.ronda !== e.ronda) { mem.ronda = e.ronda; mem.paso = Math.min(e.inicio + e.ventana - 6, n + Math.round(ZZ.mix(30, 13, d) + rng.campana() * 5)); }
-    return n === mem.paso && e.espera === 0 ? [{ t: 'd', x: (e.rondas[e.ronda].correcta + 0.5) * 640 / e.rondas[e.ronda].cartas.length, y: 550 }] : [];
-  }
-  function textoTarjeta(g, texto, x, cy, ancho, tam) {
-    const lineas = [], palabras = texto.split(' ');
-    let linea = '';
-    for (const palabra of palabras) {
-      const prueba = linea ? linea + ' ' + palabra : palabra;
-      if (linea && T.ancho(g, prueba, tam, T.F_UI, 900) > ancho) { lineas.push(linea); linea = palabra; }
-      else linea = prueba;
-    }
-    if (linea) lineas.push(linea);
-    const alto = tam * 1.18, inicio = cy - (lineas.length - 1) * alto / 2;
-    lineas.forEach((s, i) => T.texto(g, s, x, inicio + i * alto, tam, { color: C.tinta, fuente: T.F_UI, peso: 900, w: 0 }));
-  }
-  function fondo(g) {
-    g.fillStyle = C.fondo; g.fillRect(0, 0, 640, 840);
-    g.fillStyle = T.trama(g, C.noche, 24, 3); g.fillRect(0, 0, 640, 840);
-    T.texto(g, 'REVOLTIJO', 320, 70, 43, { color: T.PAPEL, w: 8 });
-    T.texto(g, '¡A SU SITIO!', 320, 128, 52, { color: C.lima, w: 9 });
-    T.vol(g, c => T.rr(c, 24, 176, 592, 115, 24), C.tarjeta, { sombra: C.noche, dx: 0, dy: 9, w: 5 });
-  }
-  function dibuja(g, e, vis) {
-    T.capa(g, vis, 'revoltijo', fondo);
-    const r = e.rondas[e.ronda], cantidad = r.cartas.length;
-    T.texto(g, '¿QUÉ VA EN…?', 320, 208, 24, { color: C.tinta, fuente: T.F_UI, peso: 900, w: 2 });
-    T.texto(g, r.caja, 320, 257, 37, { color: '#6E45A0', w: 5 });
-    T.texto(g, 'RONDA ' + (e.ronda + 1) + ' / ' + e.rondas.length, 320, 337, 19, { color: T.PAPEL, fuente: T.F_UI, peso: 900, w: 2 });
-    const h = cantidad === 4 ? 104 : 132, gap = 13, w = (592 - gap * (cantidad - 1)) / cantidad;
-    for (let i = 0; i < cantidad; i++) {
-      const x = 24 + i * (w + gap), y = cantidad === 4 ? 416 : 412, elegida = e.seleccion === i;
-      const color = elegida ? (e.acierto ? C.lima : C.rosa) : C.tarjeta;
-      T.vol(g, c => T.rr(c, x, y, w, h, 17), color, { sombra: '#171326', dx: 0, dy: 8, w: 4 });
-      T.circ(g, x + w / 2, y + 27, 17); T.pinta(g, elegida ? C.tinta : C.azul, 0);
-      T.texto(g, String(i + 1), x + w / 2, y + 28, 17, { color: T.TINTA, fuente: T.F_UI, peso: 900, w: 0 });
-      textoTarjeta(g, r.cartas[i].texto, x + w / 2, y + h / 2 + 25, w - 14, cantidad === 4 ? 15 : 18);
-    }
-    const restante = ZZ.lim(1 - (vis.n - e.inicio) / e.ventana, 0, 1);
-    T.vol(g, c => T.rr(c, 62, 621, 516, 22, 11), '#131021', { dx: 0, dy: 0, w: 0 });
-    T.vol(g, c => T.rr(c, 62, 621, 516 * restante, 22, 11), restante > 0.35 ? C.lima : C.rosa, { dx: 0, dy: 0, w: 0 });
-    T.texto(g, 'TOCA UNA TARJETA · ¡SIN PENSAR MUCHO!', 320, 711, 20, { color: C.oro, fuente: T.F_UI, peso: 900, w: 3 });
-    vis.ch.dibuja(g, 0); vis.ch.dibuja(g, 1);
-  }
-  function efectos(e, vis, ev, son) {
-    for (const x of ev) if (x.t === 'respuesta') {
-      T.palabra(vis.ch, x.bien ? '¡QUÉ BUEN CAJÓN!' : x.fuera ? '¡SE FUE EL TREN!' : '¡AL CAJÓN EQUIVOCADO!', 320, 162, x.bien ? C.lima : C.rosa, 34, 1);
-      if (son) x.bien ? son.acierto() : son.fallo();
-    }
-  }
-  ZZ.canales.revoltijo = {
-    id: 'revoltijo', num: 11, nombre: 'REVOLTIJO', orden: '¡A SU SITIO!',
-    pista: 'Toca el objeto que pertenece a la categoría', rotulo: 'ORDEN RELÁMPAGO: «¡ESO NO VA AHÍ!»',
-    color: C.fondo, color2: C.rosa, color3: T.AMARILLO,
-    animo: x => x.t === 'respuesta' ? (x.bien ? 1 : -1) : 0,
-    init, paso, puntuacion, casa, dibuja, efectos,
-  };
-})();
-//# sourceURL=zz/canales/revoltijo.js
 </script>
 <script>
 /* ZikZak · tele
@@ -3664,7 +3411,7 @@
   };
 
   // --- mi estado: siempre entero, nunca a trozos ---------------------------------------
-  const CLAVES = ['v', 'alias', 'pinta', 'est', 'a', 'd', 'i', 'f', 'p', 'm', 'r'];
+  const CLAVES = ['v', 'alias', 'pinta', 'est', 'a', 'd', 'i', 'f', 'p', 'm', 'r', 'n'];
   let ultimo = '';
   R.pon = function (patch) {
     Object.assign(R.yo, patch);
@@ -3688,14 +3435,14 @@
       peer: String(p.peer), otra: !!p.isMe, alias: limpia(q.alias), pinta: ent(q.pinta, 0, 4, 0),
       est: ['menu', 'sala', 'reto', 'duelo'].indexOf(q.est) >= 0 ? q.est : 'menu',
       a: typeof q.a === 'string' ? q.a.slice(0, 64) : null,
-      i: ent(q.i, 0, 3, 0), f: ['espera', 'listo', 'juego', 'hecho'].indexOf(q.f) >= 0 ? q.f : 'espera',
+      i: ent(q.i, 0, 5, 0), n: q.n === 5 ? 5 : 3, f: ['espera', 'listo', 'juego', 'hecho'].indexOf(q.f) >= 0 ? q.f : 'espera',
       p: ent(q.p, 0, 1000, 0),
       m: Array.isArray(q.m) && q.m.length === 2 ? [ent(q.m[0], 0, 1e6, 0), ent(q.m[1], -1, 1, 0)] : [0, 0],
-      r: Array.isArray(q.r) ? q.r.slice(0, 3).map(v => ent(v, 0, 1000, 0)) : [],
+      r: Array.isArray(q.r) ? q.r.slice(0, 5).map(v => ent(v, 0, 1000, 0)) : [],
       d: null,
     };
     const d = q.d;
-    if (d && Number.isInteger(d.s) && Array.isArray(d.r) && d.r.length === 3 &&
+    if (d && Number.isInteger(d.s) && Array.isArray(d.r) && (d.r.length === 3 || d.r.length === 5) &&
         d.r.every(x => Array.isArray(x) && tiene(ZZ.canales, x[0]) && ent(x[1], 1, 3, 0))) {
       o.d = { s: d.s >>> 0, r: d.r.map(x => [x[0], x[1]]) };
     }
@@ -3726,7 +3473,7 @@
 (function () {
   'use strict';
   const ZZ = window.ZZ, C = ZZ.codigo = {};
-  const IDS = ['cocina', 'tiempo', 'western', 'concurso', 'teletienda', 'bricolaje', 'documental', 'musical', 'burbujas', 'equilibrista', 'revoltijo'];      // este orden va dentro de los códigos: no se cambia
+  const IDS = ['cocina', 'tiempo', 'western', 'concurso', 'teletienda', 'bricolaje', 'documental', 'musical'];      // este orden va dentro de los códigos: no se cambia
   const TIPOS = ['d', 'm', 'u'];
   const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 
@@ -3782,7 +3529,7 @@
     const m = /ZZ1-([A-Za-z0-9_-]+)/.exec(String(txt || '').replace(/\s+/g, ''));
     if (!m) return null;
     const b = aBytes(m[1]);
-    if (!b || b.length < 24 || b.length > 12000) return null;
+    if (!b || b.length < 24 || b.length > 30000) return null;
     const fin = b.length - 2;
     if (suma(b, fin) !== ((b[fin] << 8) | b[fin + 1])) return null;
     let i = 0;
@@ -3795,9 +3542,11 @@
     i += n;
     const semilla = ((uno() << 24) | (uno() << 16) | (uno() << 8) | uno()) >>> 0;
     const rondas = [];
-    for (let k = 0; k < 3; k++) {
+    for (let k = 0; i < fin && k < 5; k++) {
       const id = IDS[uno()], nivel = uno(), cuantos = (uno() << 8) | uno();
-      if (!id || !ZZ.canales[id] || nivel < 1 || nivel > 3 || cuantos < 0 || cuantos > 1500) return null;
+      if (!id || !ZZ.canales[id] || nivel < 1 || nivel > 3 || cuantos < 0) return null;
+      const tope = ZZ.pasosDe(ZZ.canales[id]);
+      if (cuantos > tope * 5) return null;
       const grab = [];
       let ps = 0, px = 0, py = 0;
       for (let j = 0; j < cuantos; j++) {
@@ -3806,13 +3555,13 @@
         let s, x, y;
         if ((c0 & 63) < 63) { s = ps + (c0 & 63); x = px + uno() - 128; y = py + uno() - 128; }
         else { s = (uno() << 8) | uno(); x = (uno() << 8) | uno(); y = (uno() << 8) | uno(); }
-        if (!(s >= ps && s <= ZZ.PASOS && x >= 0 && x <= ZZ.PW && y >= 0 && y <= ZZ.PH)) return null;
+        if (!(s >= ps && s <= tope && x >= 0 && x <= ZZ.PW && y >= 0 && y <= ZZ.PH)) return null;
         grab.push([s, t, x, y]);
         ps = s; px = x; py = y;
       }
       rondas.push({ id, nivel, semilla: (semilla + 7919 * (k + 1)) >>> 0, grab });
     }
-    if (i !== fin) return null;
+    if (i !== fin || (rondas.length !== 3 && rondas.length !== 5)) return null;
     return { alias, pinta, semilla, rondas };
   };
 })();
@@ -3834,13 +3583,14 @@
     lee(k, def) { try { const v = localStorage.getItem('zz1_' + k); return v ? JSON.parse(v) : def; } catch (e) { return def; } },
     pon(k, v) { try { localStorage.setItem('zz1_' + k, JSON.stringify(v)); } catch (e) { /* sin sitio: se sigue sin guardar */ } },
   };
-  const perfil = Object.assign({ pinta: 0, cuota: 0.45, duelos: 0, ganados: 0, mudo: false, mejores: {}, vistos: {} }, guarda.lee('perfil', {}));
+  const perfil = Object.assign({ pinta: 0, cuota: 0.45, duelos: 0, ganados: 0, mudo: false, mejores: {}, vistos: {}, rondas: 3 }, guarda.lee('perfil', {}));
+  if (perfil.rondas !== 5) perfil.rondas = 3;      // duelos a 3 o a 5 canales
   const guardaPerfil = () => guarda.pon('perfil', perfil);
   son.pon(perfil.mudo);
   // lo que los demás ven de mí en la sala: un nombre de la casa (sin datos personales) y mi pinta
   const red = ZZ.red;
   if (!perfil.alias) { perfil.alias = red.aliasNuevo(); guardaPerfil(); }
-  const publica = patch => red.pon(Object.assign({ v: 1, alias: perfil.alias, pinta: perfil.pinta }, patch || {}));
+  const publica = patch => red.pon(Object.assign({ v: 1, alias: perfil.alias, pinta: perfil.pinta, n: perfil.rondas }, patch || {}));
   const aliasLimpio = t => String(t || '').toUpperCase().replace(/[^A-ZÁÉÍÓÚÜÑ0-9 ]/g, '').slice(0, 14) || 'ALGUIEN';
   // El recuadro de texto de los códigos de reto: el único trozo de la página que no es lienzo,
   // porque copiar y pegar solo funciona de verdad en un campo de texto.
@@ -4011,10 +3761,11 @@
     } else {
       const semilla = (Math.random() * 4294967296) >>> 0, rng = ZZ.azar(semilla);
       const c = perfil.cuota;
-      const niveles = c < 0.38 ? [1, 1, 2] : c < 0.6 ? [1, 2, 2] : c < 0.8 ? [2, 2, 3] : [2, 3, 3];
+      const n3 = c < 0.38 ? [1, 1, 2] : c < 0.6 ? [1, 2, 2] : c < 0.8 ? [2, 2, 3] : [2, 3, 3];
+      const niveles = perfil.rondas === 5 ? [n3[0], n3[1], n3[1], n3[2], n3[2]] : n3;
       const bar = ids.slice();
       for (let i = bar.length - 1; i > 0; i--) { const j = rng.entero(0, i); const x = bar[i]; bar[i] = bar[j]; bar[j] = x; }
-      const rondas = [0, 1, 2].map(i => {
+      const rondas = niveles.map((_, i) => {
         const id = bar[i % bar.length], sem = (semilla + 7919 * (i + 1)) >>> 0, nivel = niveles[i];
         const dest = ZZ.lim(c + rng.campana() * 0.07, 0.08, 0.97);
         return { id, nivel, semilla: sem, grab: ZZ.grabaCasa(ZZ.canales[id], sem, nivel, dest).grab };
@@ -4027,11 +3778,12 @@
   function creaEnsayo(id, nivel) {
     return { tipo: 'ensayo', rondas: [{ id, nivel, semilla: (Math.random() * 4294967296) >>> 0, grab: null }], i: 0, res: [], pts: [], rival: null };
   }
-  // Tres canales barajados para un duelo entre dos personas.
-  function defVivo() {
+  // Tres o cinco canales barajados para un duelo entre dos personas.
+  function defVivo(cuantos) {
     const s0 = (Math.random() * 4294967296) >>> 0, rng = ZZ.azar(s0), bar = Object.keys(ZZ.canales);
     for (let i = bar.length - 1; i > 0; i--) { const j = rng.entero(0, i); const x = bar[i]; bar[i] = bar[j]; bar[j] = x; }
-    return { s: s0, r: [0, 1, 2].map(i => [bar[i % bar.length], [1, 2, 2][i]]) };
+    const niv = (cuantos || perfil.rondas) === 5 ? [1, 2, 2, 3, 3] : [1, 2, 2];
+    return { s: s0, r: niv.map((nv, i) => [bar[i % bar.length], nv]) };
   }
   const rondasDe = def => def.r.map((x, i) => ({ id: x[0], nivel: x[1], semilla: (def.s + 7919 * (i + 1)) >>> 0, grab: null }));
   // Por turnos, en el mismo móvil: primero juega una persona y luego la otra, contra su grabación.
@@ -4090,7 +3842,7 @@
     const r = A.ronda;
     son.calla();
     r.pYo = r.yo.puntos();
-    r.agotado = r.yo.n >= ZZ.PASOS;
+    r.agotado = r.yo.n >= ZZ.pasosDe(r.canal);
     if (r.rival) {
       r.pRival = r.rival.hastaElFinal();
       r.gana = r.pYo > r.pRival ? 1 : r.pYo < r.pRival ? -1 : 0;
@@ -4230,11 +3982,11 @@
       fondoPantalla(gg, T.VIOLETA, 320, 250);
       logo(gg, 316, 226, 0.82, A.t);
       P.busto(gg, 606, 432 + Math.sin(A.t * 0.05) * 4, 0.88, P.AJUSTE, 'contento', A.t, { ladeo: -0.3 });
-      gg.save(); gg.translate(320, 438); gg.rotate(-0.03);
-      T.rr(gg, -228, -22, 470, 60, 12); T.pinta(gg, T.TINTA, 0);
-      T.rr(gg, -236, -30, 472, 60, 12); T.pinta(gg, T.PAPEL, 6);
-      T.texto(gg, 'DUELOS DE 5 SEGUNDOS', 0, 2, 31, ui(T.TINTA));
-      gg.restore();
+      for (const nn of [3, 5]) {
+        const sel = perfil.rondas === nn;
+        boton(gg, 'n' + nn, nn === 3 ? 100 : 326, 408, 214, 62, 'A ' + nn + ' CANALES', sel ? T.AMARILLO : T.mezcla(T.PAPEL, T.TINTA, 0.4),
+          () => { perfil.rondas = nn; guardaPerfil(); publica({}); }, { tam: 22, ctxt: T.TINTA, fuente: T.F_UI, peso: 900 });
+      }
       boton(gg, 'duelo', 100, 494, 440, 100, '¡A ZAPEAR!', T.ROJO, () => { A.duelo = creaDuelo('casa'); ir('buscando'); }, { tam: 52 });
       // si alguien me reta desde su móvil, el botón lo avisa
       const yoPeer = red.miPeer(), meRetan = !!yoPeer && red.gente().some(o => o.est === 'reto' && o.a === yoPeer);
@@ -4425,7 +4177,7 @@
     tic() {
       vivo();
       if (A.te === F_ROTULO + 9) { A.temblor = 10; son.orden(); }
-      if (A.te >= F_ROTULO + A.ronda.fOrden) { son.sintonia(A.ronda.canal.id); ir('juego'); }
+      if (A.te >= F_ROTULO + A.ronda.fOrden) { son.sintonia(A.ronda.canal.id, ZZ.pasosDe(A.ronda.canal) / ZZ.HZ); ir('juego'); }
     },
     pinta(gg) {
       escena(gg);
@@ -4663,7 +4415,7 @@
         P.busto(gg, 130, 512, 0.86, P.PINTAS[c.pinta % P.PINTAS.length], 'contento', A.t);
         gg.restore(); T.circ(gg, 130, 498, 62); T.linea(gg, 6);
         T.texto(gg, aliasLimpio(c.alias), 214, 480, 38, { al: 'left', color: T.PAPEL });
-        T.texto(gg, 'te reta a tres canales', 216, 526, 24, ui(T.PAPEL, { al: 'left' }));
+        T.texto(gg, 'te reta a ' + (c.rondas.length === 5 ? 'cinco' : 'tres') + ' canales', 216, 526, 24, ui(T.PAPEL, { al: 'left' }));
         boton(gg, 'aceptaC', 90, 596, 460, 100, '¡ACEPTO!', T.ROJO, () => { try { cajaCod.blur(); } catch (e) { /* nada */ } A.duelo = creaRetado(c); ir('buscando'); }, { tam: 46 });
       } else if (A.codVisto) parrafo(gg, 'Ese código no vale. Cópialo entero, desde «ZZ1-» hasta el final.', 320, 480, 520, 23, T.PAPEL, true);
       boton(gg, 'volver', 220, 742, 200, 62, 'VOLVER', T.TINTA, () => ir('amigo'), { tam: 26 });
@@ -4686,7 +4438,7 @@
       gg.restore();
       T.circ(gg, 320, 340, 168); T.linea(gg, 7);
       T.texto(gg, d.yoNombre, 320, 560, 56, { color: T.PAPEL });
-      T.texto(gg, f2 ? 'Te toca contra la grabación de JUGADOR 1' : 'Tres canales seguidos. Después juega JUGADOR 2.', 320, 618, 23, ui(T.PAPEL, { peso: 700 }));
+      T.texto(gg, f2 ? 'Te toca contra la grabación de JUGADOR 1' : (d.rondas.length === 5 ? 'Cinco' : 'Tres') + ' canales seguidos. Después juega JUGADOR 2.', 320, 618, 23, ui(T.PAPEL, { peso: 700 }));
       boton(gg, 'pintaT', 44, 690, 250, 76, 'OTRA PINTA', T.AMARILLO, () => { d.pintas[d.fase - 1] = (d.pintas[d.fase - 1] + 1) % P.PINTAS.length; son.cara(); }, { tam: 24, ctxt: T.TINTA, fuente: T.F_UI, peso: 900 });
       boton(gg, 'empieza', 320, 690, 276, 76, '¡EMPEZAR!', T.ROJO, () => empiezaRonda(), { tam: 34 });
     },
@@ -4708,7 +4460,7 @@
       if ((o.est !== 'reto' && o.est !== 'duelo') || o.a !== yo) return;
       // los dos se han retado: reparte los canales quien tenga la etiqueta menor, y el otro los copia
       const base = { est: 'duelo', a: o.peer, i: 0, f: 'espera', p: 0, r: [], m: [0, 0] };
-      if (yo < o.peer) { const def = defVivo(); A.duelo = creaVivo(def, o); publica(Object.assign(base, { d: def })); ir('buscando'); }
+      if (yo < o.peer) { const def = defVivo(o.n === 5 && perfil.rondas === 5 ? 5 : 3); A.duelo = creaVivo(def, o); publica(Object.assign(base, { d: def })); ir('buscando'); }
       else if (o.d) { A.duelo = creaVivo(o.d, o); publica(Object.assign(base, { d: null })); ir('buscando'); }
     },
     pinta(gg) {
@@ -4796,13 +4548,23 @@
       // la mesa
       T.rr(gg, -20, 574, PW + 40, 300, 0); T.pinta(gg, '#2B2536', 7);
       gg.fillStyle = T.PAPEL; gg.fillRect(0, 584, PW, 6);
+      const nR = d.rondas.length, wR = (572 - (nR - 1) * 10) / nR;
       d.rondas.forEach((r, i) => {
-        const c = ZZ.canales[r.id], x = 34 + i * 194, y = 610, v = d.res[i];
-        T.rr(gg, x + 5, y + 8, 184, 64, 16); T.pinta(gg, T.TINTA, 5);
-        T.rr(gg, x, y, 184, 64, 16); T.pinta(gg, turnos || v > 0 ? T.PAPEL : T.mezcla(T.PAPEL, T.TINTA, 0.3), 5);
-        T.rr(gg, x + 8, y + 8, 48, 48, 12); T.pinta(gg, c.color, 4.5);
-        T.texto(gg, String(c.num), x + 32, y + 33, 30, { w: 5, ds: 2 });
-        T.texto(gg, turnos ? d.pts[i][1] + '–' + d.pts[i][0] : d.pts[i][0] + '–' + d.pts[i][1], x + 120, y + 34, 19, ui(T.TINTA));
+        const c = ZZ.canales[r.id], x = 34 + i * (wR + 10), y = 610, v = d.res[i];
+        const pt = turnos ? [d.pts[i][1], d.pts[i][0]] : d.pts[i];
+        T.rr(gg, x + 5, y + 8, wR, 64, 16); T.pinta(gg, T.TINTA, 5);
+        T.rr(gg, x, y, wR, 64, 16); T.pinta(gg, turnos || v > 0 ? T.PAPEL : T.mezcla(T.PAPEL, T.TINTA, 0.3), 5);
+        if (nR > 3) {
+          T.rr(gg, x + 7, y + 8, 40, 48, 11); T.pinta(gg, c.color, 4.5);
+          T.texto(gg, String(c.num), x + 27, y + 33, 26, { w: 5, ds: 2 });
+          T.texto(gg, String(pt[0]), x + 78, y + 21, 17, ui(T.TINTA));
+          gg.fillStyle = T.TINTA; gg.fillRect(x + 58, y + 32, 40, 3);
+          T.texto(gg, String(pt[1]), x + 78, y + 47, 17, ui(T.TINTA));
+        } else {
+          T.rr(gg, x + 8, y + 8, 48, 48, 12); T.pinta(gg, c.color, 4.5);
+          T.texto(gg, String(c.num), x + 32, y + 33, 30, { w: 5, ds: 2 });
+          T.texto(gg, pt[0] + '–' + pt[1], x + 120, y + 34, 19, ui(T.TINTA));
+        }
       });
       const sube = f.ahora - f.antes, mar = f.mias + '–' + f.suyas + ' en canales';
       const linea = d.tipo === 'casa' ? mar + ' · cuota de pantalla ' + cuotaTxt(f.ahora) + (sube > 0 ? ' ▲' : sube < 0 ? ' ▼' : '')
@@ -4924,7 +4686,7 @@
     TV.pantalla(g, L, gg => E.pinta(gg));
     const r = A.ronda;
     const tras = r && (A.est === 'remate' || A.est === 'marcador');
-    const k = r && (A.est === 'juego' || tras) ? (r.agotado ? 1 : r.yo.n / ZZ.PASOS) : 0;
+    const k = r && (A.est === 'juego' || tras) ? (r.agotado ? 1 : r.yo.n / ZZ.pasosDe(r.canal)) : 0;
     TV.mecha(g, L, k, A.t, !!r && A.est === 'juego', !!(tras && r.agotado));
     g.restore();
     A.ch.dibuja(g, 0);
@@ -4991,9 +4753,9 @@
             const p = rep.hastaElFinal();
             anota(p === a.puntos, id + nivel + ' la repetición da ' + p + ' y la partida dio ' + a.puntos + ' (semilla ' + sem + ')');
             anota(a.puntos >= 0 && a.puntos <= 1000 && Number.isInteger(a.puntos), id + nivel + ' puntos fuera de rango: ' + a.puntos);
-            anota(a.pasos <= ZZ.PASOS, id + nivel + ' dura más de la cuenta');
+            anota(a.pasos <= ZZ.pasosDe(canal), id + nivel + ' dura más de la cuenta');
             suma += a.puntos; min = Math.min(min, a.puntos); max = Math.max(max, a.puntos);
-            if (a.pasos < ZZ.PASOS) acabanAntes++;
+            if (a.pasos < ZZ.pasosDe(canal)) acabanAntes++;
           }
           medias[d] = Math.round(suma / semillas) + ' (' + min + '–' + max + ')';
         }
