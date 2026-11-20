@@ -45,7 +45,7 @@
   'use strict';
   const ZZ = window.ZZ = window.ZZ || {};
 
-  ZZ.VERSION = '1.4';
+  ZZ.VERSION = '1.5';
   ZZ.HZ = 60;          // pasos de lógica por segundo
   ZZ.PASOS = 300;      // cinco segundos: lo que dura un canal si no dice otra cosa
   ZZ.PW = 640;         // tamaño lógico de la pantalla de la tele
@@ -688,6 +688,18 @@
     noches: {
       bajo: [48, 48, 53, 53, 55, 55, 48, 48, 53, 48], onda: 'triangle',
       mel: [76, 0, 79, 0, 76, 0, 72, 0, 77, 0, 81, 0, 79, 0, 74, 0, 72, 0, 0, 0],
+    },
+    caza: {
+      bajo: [43, 43, 50, 50, 48, 48, 50, 50, 43, 43], onda: 'square',
+      mel: [67, 0, 72, 0, 76, 0, 79, 0, 76, 72, 67, 0, 72, 0, 76, 79, 84, 0, 79, 0],
+    },
+    pesca: {
+      bajo: [48, 48, 45, 45, 41, 41, 43, 43, 48, 48], onda: 'triangle',
+      mel: [72, 0, 76, 0, 79, 0, 76, 0, 74, 0, 77, 0, 81, 0, 77, 0, 76, 74, 72, 0],
+    },
+    espacio: {
+      bajo: [45, 45, 48, 48, 50, 50, 52, 52, 57, 57], galope: true, onda: 'square',
+      mel: [69, 72, 76, 81, 72, 76, 79, 84, 74, 77, 81, 86, 76, 79, 84, 88, 81, 84, 88, 93],
     },
     musical: {
       bajo: [45, 45, 45, 45, 48, 48, 43, 43, 45, 45], onda: 'square',
@@ -4850,6 +4862,683 @@
 //# sourceURL=zz/canales/noches.js
 </script>
 <script>
+/* ZikZak · canal 15 · Caza · ¡APUNTA!
+   Dura diez segundos. Tiro al plato con la vajilla de la abuela: los platos salen volando de las casetas
+   y se les tira un corcho. El corcho tarda en llegar, así que se toca por delante del plato.
+   Mide la anticipación: cuenta acertar, acertar en el centro y hacerlo pronto. Tirar al aire resta. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ, T = ZZ.tinta, P = ZZ.personaje;
+
+  const TOTAL = 600;
+  const VUELO = 12;            // pasos que tarda el corcho en llegar adonde se tocó
+  const Y0 = 640;              // de dónde salen los platos (queda tapado por las casetas)
+  const SUELO = 600;           // por debajo de aquí no se tira: es el trigal
+  const EJE = [320, 806];      // donde gira el cañón de corcho
+  const BOCA = 136;            // de ahí a la boca del cañón, por donde sale el corcho
+  const NIV = [null,
+    { n: 5, r: 46, dura: [140, 156], hueco: 100 },
+    { n: 6, r: 42, dura: [112, 126], hueco: 88 },
+    { n: 7, r: 38, dura: [92, 104], hueco: 76 }];
+
+  const C = {
+    cielo: ['#125E73', '#1C8C8C', '#5CC2A0', '#F4D06F'],
+    colina: '#2F7D4F', colinaS: '#1E5C39', trigo: '#F0A830', trigoS: '#C97F1A',
+    caseta: '#B5553C', casetaS: '#7E3323', techo: '#3B2A5C',
+    plato: '#FFFFFF', platoS: '#C9D6F5', corcho: '#D9A066', corchoS: '#A8703A',
+    canon: '#E0483C', canonS: '#A82C2C', tubo: '#4A5470', tuboS: '#2F3650',
+  };
+
+  // --- lógica ---------------------------------------------------------------
+  function hazPlato(rng, N, s0, lado) {
+    const dura = rng.entero(N.dura[0], N.dura[1]), apice = rng.entre(120, 330);
+    const g = 8 * (Y0 - apice) / (dura * dura);
+    const x0 = 320 + lado * 276, x1 = 320 - lado * rng.entre(60, 280);
+    return { s0, x0, vx: (x1 - x0) / dura, vy: -g * dura / 2, g, dura, r: N.r, dado: -1, caido: false };
+  }
+  function donde(o, n) {
+    const t = n - o.s0;
+    return [o.x0 + o.vx * t, Y0 + o.vy * t + o.g * t * t / 2];
+  }
+  const enElAire = (o, n) => o.dado < 0 && !o.caido && n >= o.s0 && n < o.s0 + o.dura;
+
+  function init(semilla, nivel) {
+    const rng = ZZ.azar(semilla), N = NIV[nivel];
+    const platos = [];
+    let lado = rng() < 0.5 ? -1 : 1;
+    for (let i = 0; i < N.n; i++) {
+      platos.push(hazPlato(rng, N, 24 + i * N.hueco + rng.entero(-6, 6), lado));
+      if (rng() < 0.7) lado = -lado;
+    }
+    return { semilla, nivel, platos, total: N.n, tiro: null, suma: 0, fallos: 0, rotos: 0, espera: 0, hecho: false, ev: [] };
+  }
+
+  function paso(e, entradas, n) {
+    for (let i = 0; i < e.platos.length; i++) if (e.platos[i].s0 === n) e.ev.push({ t: 'lanza', i });
+    for (const en of entradas) {
+      if (en.t !== 'd' || e.tiro) continue;      // un corcho cada vez
+      e.tiro = { n0: n, x: en.x, y: Math.min(en.y, SUELO) };
+      e.ev.push({ t: 'tiro', x: e.tiro.x, y: e.tiro.y });
+    }
+    if (e.tiro && n >= e.tiro.n0 + VUELO) {      // el corcho llega: ¿hay un plato ahí?
+      const s = e.tiro;
+      e.tiro = null;
+      let j = -1, mejor = 1e9;
+      for (let i = 0; i < e.platos.length; i++) {
+        const o = e.platos[i];
+        if (!enElAire(o, n)) continue;
+        const p = donde(o, n), d = Math.hypot(p[0] - s.x, p[1] - s.y);
+        if (p[1] <= SUELO + 20 && d <= o.r + 8 && d < mejor) { mejor = d; j = i; }
+      }
+      if (j < 0) { e.fallos++; e.ev.push({ t: 'aire', x: s.x, y: s.y }); }
+      else {
+        const o = e.platos[j], p = donde(o, n);
+        o.dado = n; e.rotos++;
+        const centro = 1 - mejor / (o.r + 8), pronto = 1 - (n - o.s0) / o.dura;
+        const pts = Math.round(50 + 30 * centro + 20 * pronto);
+        e.suma += pts;
+        e.ev.push({ t: 'plato', i: j, x: p[0], y: p[1], pts, pleno: centro > 0.72 });
+      }
+    }
+    let quedan = 0;
+    for (let i = 0; i < e.platos.length; i++) {
+      const o = e.platos[i];
+      if (o.dado < 0 && !o.caido && n >= o.s0 + o.dura) { o.caido = true; e.ev.push({ t: 'cae', i }); }
+      if (o.dado < 0 && !o.caido) quedan++;
+    }
+    if (quedan === 0 && !e.tiro) {
+      if (++e.espera === 1) e.ev.push({ t: 'fin', todos: e.rotos === e.total });
+      if (e.espera > 26) e.hecho = true;
+    }
+  }
+
+  function puntuacion(e) {
+    return ZZ.lim(Math.round((e.suma - 10 * e.fallos) * 10 / e.total), 0, 1000);
+  }
+
+  // Jugador de la casa: tarda en reaccionar, apunta con más o menos tino y, si es flojo,
+  // tira adonde está el plato y no adonde va a estar.
+  function casa(e, mem, rng, d, n) {
+    if (!mem.plan) {
+      mem.plan = e.platos.map((o, i) => ({ i, otra: rng() < ZZ.mix(0.3, 0.9, d),
+        paso: o.s0 + ZZ.lim(Math.round(ZZ.mix(64, 26, d) + rng.campana() * ZZ.mix(10, 4, d)), 14, o.dura - VUELO - 8) }));
+    }
+    if (e.tiro) return [];
+    for (const p of mem.plan) {
+      if (p.hecho || n < p.paso) continue;
+      p.hecho = true;
+      const o = e.platos[p.i];
+      if (!enElAire(o, n + VUELO)) continue;
+      const a = donde(o, n), b = donde(o, n + VUELO), k = Math.min(1, d * 1.25), sig = ZZ.mix(40, 7, d);
+      if (p.otra) mem.plan.push({ i: p.i, otra: false, paso: n + VUELO + Math.round(ZZ.mix(24, 10, d)) });
+      return [{ t: 'd', x: Math.round(ZZ.lim(ZZ.mix(a[0], b[0], k) + rng.campana() * sig, 0, ZZ.PW)),
+        y: Math.round(ZZ.lim(ZZ.mix(a[1], b[1], k) + rng.campana() * sig, 0, SUELO)) }];
+    }
+    return [];
+  }
+
+  // --- dibujo -----------------------------------------------------------------
+  function franja(g, y, h, color, arriba) {
+    g.fillStyle = color; g.fillRect(0, y, ZZ.PW, h);
+    if (arriba) { g.fillStyle = T.trama(g, arriba, 11, 3.3); g.fillRect(0, y, ZZ.PW, 34); g.fillStyle = T.trama(g, arriba, 11, 1.8); g.fillRect(0, y + 34, ZZ.PW, 24); }
+  }
+  function fondo(g) {
+    franja(g, 0, 200, C.cielo[0]);
+    franja(g, 200, 170, C.cielo[1], C.cielo[0]);
+    franja(g, 370, 150, C.cielo[2], C.cielo[1]);
+    franja(g, 520, 190, C.cielo[3], C.cielo[2]);
+    // el sol, bajo
+    T.vol(g, c => T.circ(c, 452, 566, 118), '#FFF3C4', { sombra: '#FFE08A', dx: -9, dy: -11, w: 7 });
+    // nubes del color del cielo, para que no se confundan con los platos
+    for (const [x, y, w] of [[60, 112, 170], [404, 236, 200], [250, 52, 120]]) {
+      const col = T.claro(C.cielo[1], 0.22);
+      T.vol(g, c => T.rr(c, x, y, w, 40, 20), col, { sombra: C.cielo[1], dx: 0, dy: -8, w: 6 });
+      T.vol(g, c => T.circ(c, x + w * 0.4, y + 2, 26), col, { sombra: C.cielo[1], dx: 0, dy: -8, w: 6 });
+      g.fillStyle = col; g.fillRect(x + w * 0.4 - 22, y + 6, 44, 22);
+    }
+    // colinas con dos árboles
+    T.vol(g, c => { c.beginPath(); c.moveTo(-10, 610); c.quadraticCurveTo(130, 506, 300, 590); c.quadraticCurveTo(440, 528, 650, 596); c.lineTo(650, 720); c.lineTo(-10, 720); c.closePath(); }, C.colina, { sombra: C.colinaS, dx: 0, dy: 13, w: 7 });
+    for (const [x, y, r] of [[188, 540, 30], [232, 556, 22], [560, 560, 26]]) {
+      g.beginPath(); g.moveTo(x, y + r); g.lineTo(x, y + r + 22); T.linea(g, 7);
+      T.vol(g, c => T.circ(c, x, y, r), '#3FA35F', { sombra: C.colinaS, dx: -5, dy: -6, w: 6 });
+    }
+  }
+  function caseta(g, lado) {
+    g.save(); g.translate(320 + lado * 276, 0); g.scale(lado, 1);
+    T.vol(g, c => T.rr(c, -54, 600, 112, 160, 8), C.caseta, { sombra: C.casetaS, dx: -9, dy: 0, w: 7 });
+    g.beginPath(); for (const x of [-22, 12]) { g.moveTo(x, 668); g.lineTo(x, 750); } T.linea(g, 4, C.casetaS);
+    T.rr(g, -36, 622, 68, 34, 12); T.pinta(g, '#2B1B2E', 6);          // la boca por donde salen los platos
+    T.vol(g, c => T.poli(c, [[-70, 606], [2, 552], [74, 606]]), C.techo, { dx: 0, dy: -8, w: 7 });
+    g.restore();
+  }
+  function frente(g) {
+    for (const lado of [-1, 1]) caseta(g, lado);
+    // el trigal
+    T.vol(g, c => { c.beginPath(); c.moveTo(-10, 690); c.quadraticCurveTo(150, 664, 320, 684); c.quadraticCurveTo(490, 704, 650, 676); c.lineTo(650, 850); c.lineTo(-10, 850); c.closePath(); }, C.trigo, { sombra: C.trigoS, dx: 0, dy: 12, w: 7 });
+    g.beginPath();
+    for (let i = 0; i < 24; i++) {
+      const x = 16 + i * 26 + (i % 3) * 6, y = 736 + (i * 37) % 96;
+      if (x > 236 && x < 404) continue;          // ahí va el cañón
+      g.moveTo(x, y); g.lineTo(x + 6, y - 24); g.lineTo(x + 14, y - 8);
+    }
+    T.linea(g, 4, C.trigoS);
+  }
+
+  // Un plato de la vajilla, con cara. r es el radio que cuenta para acertar.
+  function plato(g, r, expr, t) {
+    T.vol(g, c => T.circ(c, 0, 0, r), C.plato, { sombra: C.platoS, dx: -r * 0.14, dy: -r * 0.16, w: Math.max(5, r * 0.14) });
+    T.circ(g, 0, 0, r * 0.76); T.linea(g, Math.max(3, r * 0.1), T.AZUL);
+    g.save(); g.scale(r / 54, r / 54); P.cara(g, expr, t, { ex: 15, ey: -6, by: 17, piel: C.plato }); g.restore();
+  }
+  // El cañón de corcho: gira hacia donde se tocó y se encoge al tirar (ret: 1 recién tirado, 0 en reposo).
+  function canon(g, ang, ret, expr, t) {
+    g.save(); g.translate(EJE[0], EJE[1]); g.scale(1.2, 1.2);
+    g.save(); g.rotate(ang);
+    const l = 104 - ret * 26;
+    T.vol(g, c => T.rr(c, -23, -l, 46, l, 12), C.tubo, { sombra: C.tuboS, dx: -9, dy: 0, w: 6 });
+    T.vol(g, c => T.rr(c, -29, -l - 10, 58, 24, 10), T.AMARILLO, { dx: -7, dy: 0, w: 6 });
+    g.restore();
+    g.scale(1 + ret * 0.1, 1 - ret * 0.12);
+    T.vol(g, c => { c.beginPath(); c.arc(0, 0, 66, Math.PI, 0); c.closePath(); }, C.canon, { sombra: C.canonS, dx: -11, dy: -9, w: 7 });
+    g.save(); g.translate(0, -28); g.scale(0.82, 0.82); P.cara(g, expr, t, { ex: 22, ey: -6, by: 16, piel: C.canon }); g.restore();
+    g.restore();
+  }
+
+  function dibuja(g, e, vis) {
+    const n = vis.n, t = vis.t;
+    T.capa(g, vis, 'caza', fondo);
+    vis.ch.dibuja(g, 0);
+    for (const o of e.platos) {
+      if (!enElAire(o, n)) continue;
+      const p = donde(o, n);
+      g.save(); g.translate(p[0], p[1]); g.rotate(Math.sin((n - o.s0) * 0.16) * 0.3);
+      plato(g, o.r, e.tiro ? 'susto' : 'contento', t + o.s0);
+      g.restore();
+    }
+    T.capa(g, vis, 'cazaFrente', frente);
+    const ang = vis.ang || 0, ret = vis.disparo === undefined ? 0 : Math.max(0, 1 - (t - vis.disparo) / 9);
+    const hace = vis.suceso === undefined ? 99 : t - vis.suceso;
+    canon(g, ang, ret, hace < 34 ? (vis.bien ? 'euforico' : 'triste') : e.tiro ? 'tension' : 'contento', t);
+    if (e.tiro) {
+      // adónde va el corcho, y el corcho de camino
+      const k = ZZ.lim((n - e.tiro.n0) / VUELO, 0, 1);
+      const bx = EJE[0] + Math.sin(ang) * BOCA, by = EJE[1] - Math.cos(ang) * BOCA;
+      g.setLineDash([9, 8]); T.circ(g, e.tiro.x, e.tiro.y, 20); T.linea(g, 5, T.PAPEL); g.setLineDash([]);
+      g.save(); g.translate(ZZ.mix(bx, e.tiro.x, k), ZZ.mix(by, e.tiro.y, k)); g.rotate(ang);
+      T.vol(g, c => T.rr(c, -15, -20, 30, 40, 10), C.corcho, { sombra: C.corchoS, dx: -6, dy: 0, w: 6 });
+      g.restore();
+    }
+    vis.ch.dibuja(g, 1);
+  }
+
+  function efectos(e, vis, ev, son) {
+    for (const x of ev) {
+      if (x.t === 'tiro') {
+        vis.ang = Math.atan2(x.x - EJE[0], EJE[1] - x.y); vis.disparo = vis.t;
+        T.polvo(vis.ch, EJE[0] + Math.sin(vis.ang) * BOCA, EJE[1] - Math.cos(vis.ang) * BOCA, 3, T.PAPEL, 3, 10, 1);
+        son && son.golpe();
+      } else if (x.t === 'plato') {
+        const r = e.platos[x.i].r;
+        for (let i = 0; i < 8; i++) {        // los trozos
+          const a = i * 0.785 + Math.random() * 0.5, v = 5 + Math.random() * 5;
+          vis.ch.mas({ tipo: 'dib', x: x.x, y: x.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 3, g: 0.5, rot: a, vr: (Math.random() - 0.5) * 0.5, vida: 34, capa: 0,
+            dib: (c, p, k) => { c.globalAlpha = k > 0.7 ? (1 - k) * 3.3 : 1; T.poli(c, [[-r * 0.4, -r * 0.2], [r * 0.42, -r * 0.3], [0, r * 0.42]]); T.pinta(c, i % 3 ? C.plato : T.AZUL, 4); } });
+        }
+        T.estrellas(vis.ch, x.x, x.y, x.pleno ? 8 : 5, T.AMARILLO, 9, x.pleno ? 20 : 14, 1);
+        if (x.pleno) vis.ch.mas({ tipo: 'anillo', x: x.x, y: x.y, r: 30, R: 140, w: 14, color: '#FFFFFF', vida: 16, capa: 1 });
+        T.palabra(vis.ch, x.pleno ? '¡PLENO!' : '¡CRAS!', ZZ.lim(x.x, 170, 470), 170, x.pleno ? T.AMARILLO : T.PAPEL, x.pleno ? 58 : 54, 1, true);
+        vis.suceso = vis.t; vis.bien = true; vis.temblor = 7; vis.parada = 2;
+        son && son.lata();
+      } else if (x.t === 'aire') {
+        T.polvo(vis.ch, x.x, x.y, 5, T.PAPEL, 3, 11, 1);
+        T.palabra(vis.ch, '¡AL AIRE!', ZZ.lim(x.x, 170, 470), 170, T.PAPEL, 46, 1, true);
+        vis.suceso = vis.t; vis.bien = false;
+        son && son.fallo();
+      } else if (x.t === 'cae') {
+        const o = e.platos[x.i], p = donde(o, o.s0 + o.dura);
+        T.palabra(vis.ch, '¡SE ESCAPA!', ZZ.lim(p[0], 170, 470), 170, T.ROJO, 46, 1, true);
+        vis.suceso = vis.t; vis.bien = false;
+        son && son.fallo();
+      } else if (x.t === 'lanza') {
+        T.polvo(vis.ch, e.platos[x.i].x0, 600, 4, '#F3E3B0', 4, 13, 0);
+        son && son.soplo();
+      } else if (x.t === 'fin' && x.todos) {
+        T.confeti(vis.ch, 320, 300, 30, [T.AMARILLO, T.ROJO, T.MENTA, T.PAPEL], 12, 1);
+        T.palabra(vis.ch, '¡NI UNO SANO!', 320, 170, T.AMARILLO, 54, 1, true);
+        son && son.sol();
+      }
+    }
+  }
+
+  ZZ.canales.caza = {
+    id: 'caza', num: 15, nombre: 'CAZA', orden: '¡APUNTA!',
+    pista: 'Toca por delante del plato: el corcho tarda',
+    rotulo: 'CAZA MENOR: «LA VAJILLA DE LA ABUELA»',
+    color: C.cielo[1], color2: C.canon, color3: T.AMARILLO,
+    pasos: TOTAL,      // diez segundos
+    animo: x => (x.t === 'plato' ? 1 : x.t === 'aire' || x.t === 'cae' ? -1 : 0),
+    init, paso, puntuacion, casa, dibuja, efectos,
+  };
+})();
+//# sourceURL=zz/canales/caza.js
+</script>
+<script>
+/* ZikZak · canal 16 · Pesca · ¡PESCA!
+   Dura diez segundos. Un gusano valiente cuelga del anzuelo: con el dedo puesto baja y al soltarlo sube.
+   Los peces cruzan a distintas profundidades y pican si el anzuelo está a su altura cuando pasan por debajo
+   de la barca. Las botas viejas no se pescan: enredan el sedal un rato.
+   Mide el pulso: cuenta cada pez y cogerlo de lleno. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ, T = ZZ.tinta, P = ZZ.personaje;
+
+  const TOTAL = 600;
+  const X = 330;                      // por dónde baja el sedal
+  const ARRIBA = 262, ABAJO = 752;    // hasta dónde sube y baja el anzuelo
+  const VEL = 4.6;                    // lo que baja o sube en cada paso
+  const TOL = 30;                     // a qué distancia del anzuelo puede pasar un pez y picar
+  const LARGO = 36;                   // medio pez: mientras pasa por el sedal se le puede pescar
+  const ENREDO = 40;                  // pasos que tarda en soltarse una bota
+  const NIV = [null,
+    { n: 7, v: [2.5, 3.0], hueco: 62, botas: 0, salto: 0.7 },
+    { n: 8, v: [3.0, 3.7], hueco: 56, botas: 2, salto: 0.8 },
+    { n: 9, v: [3.6, 4.4], hueco: 50, botas: 3, salto: 0.9 }];
+
+  const C = {
+    cielo: '#BFEFFF', cieloS: '#8FDBF5', agua: ['#2AA7D8', '#1B7FC0', '#155E9E', '#0F3F78'],
+    arena: '#E8C277', arenaS: '#C79A4B', roca: '#5B6690', rocaS: '#3D4670', alga: '#21C58E', algaS: '#149A6C',
+    barca: '#FF3B4E', barcaS: '#B8243A', gusano: '#FF8FB1', gusanoS: '#E0607F', bota: '#9A6638', botaS: '#63401F',
+    peces: ['#FF9F1C', '#FFC928', '#FF6FA3', '#8BD63A'],
+  };
+
+  // --- lógica ---------------------------------------------------------------
+  function init(semilla, nivel) {
+    const rng = ZZ.azar(semilla), N = NIV[nivel];
+    const cosas = [];
+    let y = rng.entre(400, 620);
+    for (let i = 0; i < N.n; i++) {
+      if (i) {      // el siguiente pez queda siempre al alcance del anterior
+        const d = rng.entre(0.35, 1) * N.hueco * VEL * N.salto;
+        const baja = rng() < 0.5;
+        y = baja ? (y + d <= 730 ? y + d : y - d) : (y - d >= 330 ? y - d : y + d);
+        y = ZZ.lim(y, 330, 730);
+      }
+      cosas.push({ tipo: 'pez', cruce: 110 + i * N.hueco + rng.entero(-5, 5), dir: rng() < 0.5 ? -1 : 1, v: rng.entre(N.v[0], N.v[1]), y: Math.round(y),
+        r: rng.entero(30, 36), color: i % C.peces.length, cogido: -1, pasado: false });
+    }
+    // las botas cruzan entre dos peces alejados, justo por donde pasaría el anzuelo
+    const huecos = [];
+    for (let i = 1; i < N.n - 1; i++) if (Math.abs(cosas[i + 1].y - cosas[i].y) >= 130) huecos.push(i);
+    for (let b = 0; b < N.botas && huecos.length; b++) {
+      const i = huecos.splice(rng.entero(0, huecos.length - 1), 1)[0];
+      cosas.push({ tipo: 'bota', cruce: Math.round((cosas[i].cruce + cosas[i + 1].cruce) / 2), dir: rng() < 0.5 ? -1 : 1, v: rng.entre(N.v[0], N.v[1]),
+        y: Math.round((cosas[i].y + cosas[i + 1].y) / 2), r: 34, cogido: -1, pasado: false });
+    }
+    return { semilla, nivel, cosas, total: N.n, y: ARRIBA, pulsado: false, atasco: 0, suma: 0, cogidos: 0, botas: 0, espera: 0, hecho: false, ev: [] };
+  }
+  const xDe = (o, n) => X + o.dir * o.v * (n - o.cruce);
+
+  function paso(e, entradas, n) {
+    for (const en of entradas) { if (en.t === 'd') e.pulsado = true; else if (en.t === 'u') e.pulsado = false; }
+    const libre = n >= e.atasco;
+    if (libre) e.y = ZZ.lim(e.y + (e.pulsado ? VEL : -VEL), ARRIBA, ABAJO);
+    let quedan = 0;
+    for (let i = 0; i < e.cosas.length; i++) {
+      const o = e.cosas[i];
+      if (o.cogido >= 0 || o.pasado) continue;
+      const dx = (n - o.cruce) * o.v;      // lo que le falta (negativo) o lo que se ha pasado del sedal
+      if (dx > LARGO) { o.pasado = true; if (o.tipo === 'pez') e.ev.push({ t: 'pasa', i }); continue; }
+      quedan++;
+      if (!libre || dx < -LARGO || Math.abs(o.y - e.y) > TOL) continue;
+      o.cogido = n; quedan--;
+      if (o.tipo === 'bota') { e.botas++; e.atasco = n + ENREDO; e.ev.push({ t: 'bota', i }); continue; }
+      const pts = Math.round(70 + 30 * (1 - Math.abs(o.y - e.y) / TOL));
+      e.suma += pts; e.cogidos++;
+      e.ev.push({ t: 'pez', i, pts, x: xDe(o, n), y: o.y });
+    }
+    if (quedan === 0 && n >= e.atasco) {
+      if (++e.espera === 1) e.ev.push({ t: 'fin', todos: e.cogidos === e.total && e.botas === 0 });
+      if (e.espera > 34) e.hecho = true;
+    }
+  }
+
+  function puntuacion(e) {
+    return ZZ.lim(Math.round(e.suma * 10 / e.total) - 60 * e.botas, 0, 1000);
+  }
+
+  // Jugador de la casa: va a por el siguiente pez con más o menos tino y tarda en decidirse.
+  // Si es bueno, ve venir las botas y se aparta.
+  function casa(e, mem, rng, d, n) {
+    if (mem.i === undefined) { mem.i = -2; mem.pulsa = false; mem.desde = 0; mem.err = 0; mem.ve = e.cosas.map(() => rng() < ZZ.mix(0.15, 0.95, d)); }
+    let k = -1;
+    for (let i = 0; i < e.total; i++) if (e.cosas[i].cogido < 0 && !e.cosas[i].pasado) { k = i; break; }
+    if (k !== mem.i) {
+      mem.i = k;
+      mem.desde = n + Math.round(ZZ.mix(34, 5, d) + rng() * ZZ.mix(16, 3, d));
+      mem.err = rng.campana() * ZZ.mix(44, 7, d);
+    }
+    let quiere = mem.pulsa;
+    if (k < 0) quiere = false;
+    else if (n >= mem.desde) {
+      const meta = e.cosas[k].y + mem.err;
+      if (e.y < meta - 8) quiere = true; else if (e.y > meta + 8) quiere = false;
+      for (let i = e.total; i < e.cosas.length; i++) {
+        const b = e.cosas[i], falta = b.cruce - n;
+        if (!mem.ve[i] || b.cogido >= 0 || b.pasado || falta > 30 || falta < -14) continue;
+        if (Math.abs(e.y - b.y) < TOL + 26) quiere = e.y > b.y;      // se aparta por el lado en que ya está
+      }
+    }
+    if (quiere === mem.pulsa) return [];
+    mem.pulsa = quiere;
+    return [{ t: quiere ? 'd' : 'u', x: 320, y: 500 }];
+  }
+
+  // --- dibujo -----------------------------------------------------------------
+  function fondo(g) {
+    g.fillStyle = C.cielo; g.fillRect(0, 0, ZZ.PW, 210);
+    g.fillStyle = T.trama(g, C.cieloS, 12, 2.6); g.fillRect(0, 110, ZZ.PW, 100);
+    T.vol(g, c => T.circ(c, 268, 70, 40), '#FFE48A', { sombra: T.AMARILLO, dx: -6, dy: -7, w: 6 });
+    for (const [x, y, w] of [[36, 138, 130], [500, 34, 110]]) {
+      T.vol(g, c => T.rr(c, x, y, w, 34, 17), '#FFFFFF', { sombra: '#D6EEF8', dx: 0, dy: -7, w: 5 });
+    }
+    // el agua, más oscura cuanto más abajo
+    const ys = [204, 380, 560, 720];
+    for (let i = 0; i < 4; i++) {
+      g.fillStyle = C.agua[i]; g.fillRect(0, ys[i], ZZ.PW, ZZ.PH - ys[i]);
+      if (i) { g.fillStyle = T.trama(g, C.agua[i - 1], 11, 3.3); g.fillRect(0, ys[i], ZZ.PW, 30); g.fillStyle = T.trama(g, C.agua[i - 1], 11, 1.8); g.fillRect(0, ys[i] + 30, ZZ.PW, 22); }
+    }
+    g.save(); g.globalAlpha = 0.1; g.fillStyle = '#FFFFFF';
+    for (const x of [90, 300, 520]) { T.poli(g, [[x, 204], [x + 76, 204], [x - 70, ZZ.PH], [x - 210, ZZ.PH]]); g.fill(); }
+    g.restore();
+    // la superficie
+    g.beginPath(); g.moveTo(-20, 204);
+    for (let x = -20; x < 660; x += 44) g.quadraticCurveTo(x + 22, 190, x + 44, 204);
+    T.linea(g, 7);
+    // el fondo: arena, rocas, algas y una estrella de mar
+    for (const [x, h, s] of [[52, 150, 1], [86, 104, -1], [584, 170, -1], [552, 96, 1]]) {
+      T.tubo(g, c => { c.beginPath(); c.moveTo(x, 800); c.quadraticCurveTo(x + s * 26, 800 - h * 0.35, x, 800 - h * 0.6); c.quadraticCurveTo(x - s * 22, 800 - h * 0.85, x + s * 6, 800 - h); }, C.alga, 13, 5);
+    }
+    T.vol(g, c => { c.beginPath(); c.moveTo(-10, 790); c.quadraticCurveTo(170, 760, 330, 786); c.quadraticCurveTo(500, 808, 650, 776); c.lineTo(650, 850); c.lineTo(-10, 850); c.closePath(); }, C.arena, { sombra: C.arenaS, dx: 0, dy: 10, w: 7 });
+    T.vol(g, c => T.elip(c, 470, 800, 58, 30), C.roca, { sombra: C.rocaS, dx: -7, dy: -7, w: 6 });
+    T.vol(g, c => T.elip(c, 150, 812, 40, 22), C.roca, { sombra: C.rocaS, dx: -6, dy: -6, w: 6 });
+    T.estrella(g, 250, 808, 22, 10, 5, 0.3); T.pinta(g, '#FF8A3C', 5);
+  }
+
+  // Un pez mirando a la derecha, con el centro en el origen.
+  function pez(g, r, col, t, abre) {
+    g.save(); g.translate(-r * 1.08, 0); g.rotate(Math.sin(t * 0.3) * 0.28);
+    T.vol(g, c => T.poli(c, [[4, 0], [-r * 0.78, -r * 0.62], [-r * 0.56, 0], [-r * 0.78, r * 0.62]]), col, { dx: 0, dy: -4, w: 5 });
+    g.restore();
+    T.vol(g, c => T.poli(c, [[-r * 0.36, -r * 0.6], [r * 0.06, -r * 1.14], [r * 0.4, -r * 0.6]]), col, { dx: 0, dy: -3, w: 5 });
+    T.vol(g, c => T.elip(c, 0, 0, r * 1.25, r * 0.8), col, { sombra: T.oscuro(col, 0.24), dx: -6, dy: -7, w: 6 });
+    g.beginPath(); g.moveTo(r * 0.16, -r * 0.5); g.quadraticCurveTo(r * 0.38, 0, r * 0.16, r * 0.5); T.linea(g, 4, T.oscuro(col, 0.3));
+    T.circ(g, r * 0.66, -r * 0.16, r * 0.3); T.pinta(g, '#FFFFFF', 4);
+    T.circ(g, r * 0.74, -r * 0.13, r * 0.13); T.pinta(g, T.TINTA, 0);
+    if (abre) { T.elip(g, r * 1.14, r * 0.22, r * 0.15, r * 0.2); T.pinta(g, '#3B1522', 4); }
+    else { g.beginPath(); g.moveTo(r * 0.88, r * 0.32); g.quadraticCurveTo(r * 1.04, r * 0.42, r * 1.18, r * 0.28); T.linea(g, 4); }
+  }
+  function bota(g, t) {
+    const cam = c => T.poli(c, [[-24, -44], [16, -44], [16, 2], [44, 10], [48, 36], [-24, 36]]);
+    T.vol(g, cam, C.bota, { sombra: C.botaS, dx: -7, dy: -5, w: 6 });
+    g.beginPath(); g.moveTo(-24, 24); g.lineTo(48, 24); T.linea(g, 5);
+    T.rr(g, -28, -52, 48, 14, 6); T.pinta(g, C.botaS, 5);
+    g.save(); g.translate(-3, -12); g.scale(0.52, 0.52); P.cara(g, 'enfadado', t, { ex: 18, ey: -8, by: 20, piel: C.bota }); g.restore();
+  }
+  // El gusano en su anzuelo: se estira al bajar y se encoge al subir.
+  function gusano(g, y, sx, sy, expr, t) {
+    g.save(); g.translate(X, y);
+    T.tubo(g, c => { c.beginPath(); c.moveTo(0, -36); c.lineTo(0, 24); c.quadraticCurveTo(0, 42, -16, 40); c.quadraticCurveTo(-29, 36, -27, 22); }, '#CFD9E0', 6, 4);
+    g.scale(sx, sy);
+    T.vol(g, c => T.rr(c, -20, -32, 40, 58, 20), C.gusano, { sombra: C.gusanoS, dx: -6, dy: -5, w: 6 });
+    g.beginPath(); g.moveTo(-18, 12); g.quadraticCurveTo(0, 18, 18, 12); T.linea(g, 3.5, C.gusanoS);
+    g.save(); g.translate(0, -10); g.scale(0.5, 0.5); P.cara(g, expr, t, { ex: 18, ey: -6, by: 18, piel: C.gusano }); g.restore();
+    g.restore();
+  }
+  function barca(g, e, vis, expr) {
+    const t = vis.t;
+    // va a la derecha del sedal (se dibuja reflejada): arriba a la izquierda está el número del canal
+    g.save(); g.translate(2 * X, Math.sin(t * 0.06) * 3); g.scale(-1, 1);
+    T.tubo(g, c => { c.beginPath(); c.moveTo(236, 150); c.quadraticCurveTo(292, 92, X, 84); }, '#B97A3A', 7, 5);
+    P.busto(g, 196, 104, 0.6, P.AJUSTE, expr, t);
+    // el cubo, con lo pescado asomando
+    for (let i = 0; i < Math.min(e.cogidos, 9); i++) {
+      const cx = 86 + (i % 3) * 22, cy = 134 - Math.floor(i / 3) * 16;
+      g.save(); g.translate(cx, cy); g.rotate((i % 3 - 1) * 0.3);
+      T.poli(g, [[0, 14], [-13, -12], [0, -4], [13, -12]]); T.pinta(g, C.peces[i % C.peces.length], 4.5);
+      g.restore();
+    }
+    T.vol(g, c => T.poli(c, [[70, 136], [146, 136], [138, 176], [78, 176]]), '#8FB8D8', { sombra: '#5F8FB5', dx: -7, dy: 0, w: 6 });
+    T.vol(g, c => T.poli(c, [[52, 168], [318, 168], [286, 230], [92, 230]]), C.barca, { sombra: C.barcaS, dx: 0, dy: -13, w: 7 });
+    g.beginPath(); g.moveTo(62, 190); g.lineTo(308, 190); T.linea(g, 5, T.PAPEL);
+    g.restore();
+  }
+
+  function dibuja(g, e, vis) {
+    const n = vis.n, t = vis.t, atascado = n < e.atasco;
+    T.capa(g, vis, 'pesca', fondo);
+    vis.ch.dibuja(g, 0);
+    // el sedal
+    g.beginPath(); g.moveTo(X, 84 + Math.sin(t * 0.06) * 3); g.lineTo(X, e.y - 34); T.linea(g, 3.5);
+    for (const o of e.cosas) {
+      if (o.cogido >= 0) continue;
+      const x = xDe(o, n);
+      if (x < -80 || x > ZZ.PW + 80) continue;
+      g.save(); g.translate(x, o.y + Math.sin(t * 0.11 + o.cruce) * 3);
+      if (o.tipo === 'bota') { g.rotate(Math.sin(t * 0.05 + o.cruce) * 0.2); bota(g, t); }
+      else { g.scale(o.dir, 1); pez(g, o.r, C.peces[o.color], t + o.cruce, Math.abs(x - X) < 110 && Math.abs(o.y - e.y) < 70); }
+      g.restore();
+    }
+    const hace = vis.suceso === undefined ? 99 : t - vis.suceso;
+    const expr = atascado ? 'enfadado' : hace < 30 ? 'euforico' : 'contento';
+    gusano(g, e.y, atascado ? 1 : e.pulsado ? 0.9 : 1.1, atascado ? 1 : e.pulsado ? 1.14 : 0.9, atascado ? 'triste' : hace < 30 ? 'euforico' : e.pulsado ? 'tension' : 'contento', t);
+    if (atascado) { g.save(); g.translate(X - 6, e.y + 62); g.rotate(Math.sin(t * 0.5) * 0.25); bota(g, t); g.restore(); }
+    barca(g, e, vis, expr);
+    vis.ch.dibuja(g, 1);
+  }
+
+  function efectos(e, vis, ev, son) {
+    if (vis.t % 26 === 0) vis.ch.mas({ tipo: 'polvo', x: X + 16, y: e.y - 30, vx: 0.3, vy: -1.6, r: 5, w: 3, color: '#DFF4FF', vida: 34, capa: 0 });
+    for (const x of ev) {
+      if (x.t === 'pez') {
+        const o = e.cosas[x.i], col = C.peces[o.color], y0 = x.y;
+        // el pez sale volando hacia el cubo de la barca
+        vis.ch.mas({ tipo: 'dib', x: X, y: y0, vx: (2 * X - 108 - X) / 28, vy: (140 - y0) / 28 - 7, g: 0.5, vr: -0.3, vida: 28, capa: 1,
+          dib: c => { c.scale(0.7, 0.7); pez(c, o.r, col, vis.t, true); } });
+        T.estrellas(vis.ch, X, y0, 5, T.AMARILLO, 8, 14, 1);
+        T.palabra(vis.ch, x.pts >= 93 ? '¡QUÉ PIEZA!' : '¡PICÓ!', 176, 154, x.pts >= 93 ? T.AMARILLO : T.PAPEL, x.pts >= 93 ? 40 : 50, 1, true);
+        vis.suceso = vis.t;
+        son && (x.pts >= 93 ? son.clavado() : son.acierto());
+      } else if (x.t === 'bota') {
+        T.palabra(vis.ch, '¡UNA BOTA!', 176, 154, T.ROJO, 42, 1, true);
+        vis.temblor = 10;
+        son && son.fallo();
+      } else if (x.t === 'fin' && x.todos) {
+        T.confeti(vis.ch, 320, 240, 30, [T.AMARILLO, T.ROJO, T.MENTA, T.PAPEL], 12, 1);
+        T.palabra(vis.ch, '¡CESTA LLENA!', 176, 154, T.AMARILLO, 36, 1, true);
+        son && son.sol();
+      }
+    }
+  }
+
+  ZZ.canales.pesca = {
+    id: 'pesca', num: 16, nombre: 'PESCA', orden: '¡PESCA!', hechoTxt: '¡A LA CESTA!',
+    pista: 'Mantén para bajar el anzuelo. Suelta y sube',
+    rotulo: 'PESCA EN DIRECTO: «EL GUSANO VALIENTE»',
+    color: C.agua[1], color2: C.barca, color3: T.AMARILLO,
+    arrastra: true, todaLaPantalla: true,
+    pasos: TOTAL,      // diez segundos
+    animo: x => (x.t === 'pez' ? 1 : x.t === 'bota' ? -1 : 0),
+    init, paso, puntuacion, casa, dibuja, efectos,
+  };
+})();
+//# sourceURL=zz/canales/pesca.js
+</script>
+<script>
+/* ZikZak · canal 17 · Espacio · ¡DESPEGA!
+   Cinco segundos. Un cohete con cara quiere llegar al planeta: cada toque es un empujón y, si se deja
+   de tocar, se cae. En los niveles altos lleva sacos de lastre y pesa más.
+   Mide la rapidez de dedo: cuenta lo alto que está el cohete cuando se acaba el tiempo. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ, T = ZZ.tinta, P = ZZ.personaje;
+
+  const ROZ = 0.9;                    // el aire frena: cada empujón se gasta enseguida
+  const BASE = 770, TRAMO = 430;      // dónde pisa el cohete en la plataforma y cuánto sube hasta el planeta
+  const NIV = [null,
+    { imp: 0.0031, g: 0.000133, sacos: 0 },
+    { imp: 0.00285, g: 0.00014, sacos: 1 },
+    { imp: 0.0026, g: 0.00015, sacos: 3 }];
+
+  const C = {
+    cielo: ['#070B2E', '#10206B', '#1F4FB0', '#3FA0E0', '#BDEBFF'],
+    planeta: '#FF6FA3', planetaS: '#D94A82', anillo: '#FFC928', suelo: '#3E8E5A', sueloS: '#2A6B41',
+    base: '#8E99B3', baseS: '#626D8A', torre: '#FF3B4E', torreS: '#B8243A', cuerpo: '#F4F1EA', cuerpoS: '#C9D6F5', saco: '#B98A4E',
+  };
+
+  // --- lógica ---------------------------------------------------------------
+  function init(semilla, nivel) {
+    return { semilla, nivel, h: 0, v: 0, toques: 0, ultimo: -99, despego: false, cayendo: false, arriba: -1, hecho: false, ev: [] };
+  }
+
+  function paso(e, entradas, n) {
+    const N = NIV[e.nivel];
+    if (e.arriba >= 0) { if (n >= e.arriba + 40) e.hecho = true; return; }
+    for (const en of entradas) if (en.t === 'd') { e.v += N.imp; e.toques++; e.ultimo = n; e.ev.push({ t: 'toque' }); }
+    e.v = (e.v - N.g) * ROZ;
+    e.h += e.v;
+    if (e.h <= 0) { e.h = 0; if (e.v < 0) e.v = 0; }
+    if (!e.despego && e.h > 0.02) { e.despego = true; e.ev.push({ t: 'despega' }); }
+    if (e.v > 0) e.cayendo = false;
+    else if (!e.cayendo && e.h > 0.1 && e.v < -0.0006) { e.cayendo = true; e.ev.push({ t: 'cae' }); }
+    if (e.h >= 1) { e.h = 1; e.arriba = n; e.ev.push({ t: 'llega' }); }
+  }
+
+  function puntuacion(e) {
+    return Math.round(1000 * ZZ.lim(e.h, 0, 1));
+  }
+
+  // Jugador de la casa: toca más o menos deprisa, sin parar.
+  function casa(e, mem, rng, d, n) {
+    if (mem.sig === undefined) mem.sig = 20 + rng.entero(0, 12);
+    if (e.arriba >= 0 || n < mem.sig) return [];
+    mem.sig = n + Math.max(3, Math.round(60 / (ZZ.mix(3.5, 9.5, d) + rng.campana() * 0.8)));
+    return [{ t: 'd', x: 320, y: 500 }];
+  }
+
+  // --- dibujo -----------------------------------------------------------------
+  function fondo(g) {
+    const ys = [0, 200, 380, 540, 680];
+    for (let i = 0; i < 5; i++) {
+      g.fillStyle = C.cielo[i]; g.fillRect(0, ys[i], ZZ.PW, ZZ.PH - ys[i]);
+      if (i) { g.fillStyle = T.trama(g, C.cielo[i - 1], 11, 3.3); g.fillRect(0, ys[i], ZZ.PW, 34); g.fillStyle = T.trama(g, C.cielo[i - 1], 11, 1.8); g.fillRect(0, ys[i] + 34, ZZ.PW, 24); }
+    }
+    g.fillStyle = T.PAPEL;
+    for (const [x, y, r] of [[60, 70, 6], [150, 180, 4], [230, 40, 4.5], [470, 60, 5], [580, 150, 6], [520, 250, 4], [90, 300, 4.5], [600, 330, 3.5], [40, 420, 3.5], [430, 330, 3.5]]) { T.estrella(g, x, y, r * 2, r * 0.8, 4); g.fill(); }
+    // nubes a media altura
+    for (const [x, y, w] of [[-30, 590, 190], [470, 620, 210], [60, 696, 130]]) {
+      T.vol(g, c => T.rr(c, x, y, w, 42, 21), '#FFFFFF', { sombra: '#D6EEF8', dx: 0, dy: -8, w: 6 });
+    }
+    // el suelo, la plataforma y la torre de lanzamiento
+    T.vol(g, c => { c.beginPath(); c.moveTo(-10, 790); c.quadraticCurveTo(160, 760, 320, 784); c.quadraticCurveTo(480, 806, 650, 778); c.lineTo(650, 850); c.lineTo(-10, 850); c.closePath(); }, C.suelo, { sombra: C.sueloS, dx: 0, dy: 10, w: 7 });
+    T.vol(g, c => T.rr(c, 150, 500, 46, 290, 6), C.torre, { sombra: C.torreS, dx: -8, dy: 0, w: 7 });
+    g.beginPath();
+    for (let y = 520; y < 770; y += 50) { g.moveTo(150, y); g.lineTo(196, y + 50); g.moveTo(196, y); g.lineTo(150, y + 50); }
+    T.linea(g, 4, C.torreS);
+    T.vol(g, c => T.rr(c, 190, 596, 76, 18, 6), C.torre, { sombra: C.torreS, dx: 0, dy: -5, w: 6 });
+    T.vol(g, c => T.rr(c, 132, 770, 376, 34, 9), C.base, { sombra: C.baseS, dx: 0, dy: -9, w: 7 });
+    g.fillStyle = T.AMARILLO; for (let x = 150; x < 490; x += 44) { T.poli(g, [[x, 794], [x + 22, 794], [x + 12, 804], [x - 10, 804]]); g.fill(); }
+  }
+
+  // El planeta de arriba, que es la meta: mira cómo sube el cohete.
+  function planeta(g, expr, t, mira) {
+    g.save(); g.translate(320, 96);
+    g.save(); g.rotate(-0.22);
+    T.elip(g, 0, 0, 112, 26); T.linea(g, 15); T.elip(g, 0, 0, 112, 26); T.linea(g, 7, C.anillo);
+    g.restore();
+    T.vol(g, c => T.circ(c, 0, 0, 66), C.planeta, { sombra: C.planetaS, dx: -10, dy: -11, w: 7 });
+    // el anillo pasa por delante en la mitad de abajo
+    g.save(); g.rotate(-0.22); g.beginPath(); g.rect(-130, 0, 260, 40); g.clip();
+    T.elip(g, 0, 0, 112, 26); T.linea(g, 15); T.elip(g, 0, 0, 112, 26); T.linea(g, 7, C.anillo);
+    g.restore();
+    g.save(); g.translate(0, -12); g.scale(0.8, 0.8); P.cara(g, expr, t, { ex: 24, ey: -8, by: 18, piel: C.planeta, mira }); g.restore();
+    g.restore();
+  }
+
+  // El cohete, con el origen donde pisa. empuje va de 0 a 1: la llama y lo que se estira.
+  function cohete(g, expr, t, empuje, sacos) {
+    g.save(); g.scale(1 - empuje * 0.08, 1 + empuje * 0.12);
+    if (empuje > 0.04) {
+      const l = 34 + empuje * 76 + Math.sin(t * 1.3) * 8;
+      T.poli(g, [[-24, -10], [0, l], [24, -10]]); T.pinta(g, T.ROJO, 6);
+      T.poli(g, [[-12, -10], [0, l * 0.58], [12, -10]]); T.pinta(g, T.AMARILLO, 0);
+    }
+    // el lastre cuelga de las aletas
+    for (let i = 0; i < sacos; i++) {
+      const x = [-58, 58, 0][i], y = i === 2 ? 34 : 22;
+      g.beginPath(); g.moveTo(x, -12); g.lineTo(x, y - 12); T.linea(g, 4);
+      T.vol(g, c => T.rr(c, x - 16, y - 14, 32, 34, 12), C.saco, { dx: -5, dy: 0, w: 5 });
+      g.beginPath(); g.moveTo(x - 9, y - 6); g.lineTo(x + 9, y - 6); T.linea(g, 4);
+    }
+    for (const s of [-1, 1]) T.vol(g, c => T.poli(c, [[s * 30, -74], [s * 68, -6], [s * 30, -16]]), T.ROJO, { dx: 0, dy: -7, w: 6 });
+    const cam = c => { c.beginPath(); c.moveTo(-40, -8); c.lineTo(-40, -112); c.quadraticCurveTo(-40, -178, 0, -198); c.quadraticCurveTo(40, -178, 40, -112); c.lineTo(40, -8); c.closePath(); };
+    T.vol(g, cam, C.cuerpo, { sombra: C.cuerpoS, dx: -11, dy: 0, w: 0 });
+    g.save(); cam(g); g.clip();
+    g.fillStyle = T.ROJO; g.fillRect(-44, -202, 88, 62);
+    g.fillStyle = T.oscuro(T.ROJO, 0.25); g.fillRect(29, -202, 15, 62);
+    g.restore();
+    g.beginPath(); g.moveTo(-40, -140); g.lineTo(40, -140); g.moveTo(-40, -28); g.lineTo(40, -28); T.linea(g, 6);
+    cam(g); T.linea(g, 7);
+    g.save(); g.translate(0, -86); g.scale(0.9, 0.9); P.cara(g, expr, t, { ex: 17, ey: -8, by: 20, piel: C.cuerpo, mira: { x: 0, y: -0.8 } }); g.restore();
+    g.restore();
+  }
+
+  function dibuja(g, e, vis) {
+    const n = vis.n, t = vis.t, y = BASE - e.h * TRAMO;
+    const empuje = Math.max(0, 1 - (n - e.ultimo) / 9), arriba = e.arriba >= 0, cae = e.cayendo;
+    T.capa(g, vis, 'espacio', fondo);
+    planeta(g, arriba ? 'euforico' : e.h > 0.6 ? 'contento' : 'neutro', t, { x: 0, y: 1 });
+    vis.ch.dibuja(g, 0);
+    g.save(); g.translate(320 + (cae ? Math.sin(t * 0.9) * 4 : 0), y); g.rotate(cae ? Math.sin(t * 0.5) * 0.07 : 0);
+    cohete(g, arriba ? 'euforico' : cae ? 'susto' : empuje > 0 ? 'tension' : e.despego ? 'triste' : 'contento', t, arriba ? 0 : empuje, NIV[e.nivel].sacos);
+    g.restore();
+    vis.ch.dibuja(g, 1);
+  }
+
+  function efectos(e, vis, ev, son) {
+    const y = BASE - e.h * TRAMO;
+    for (const x of ev) {
+      if (x.t === 'toque') {
+        T.polvo(vis.ch, 320 + (Math.random() - 0.5) * 30, y + 14, 2, '#FFFFFF', 3, 10, 0);
+        son && son.agarra();
+      } else if (x.t === 'despega') {
+        T.polvo(vis.ch, 320, BASE, 9, '#FFFFFF', 7, 18, 0);
+        vis.temblor = 6;
+        son && son.soplo();
+      } else if (x.t === 'cae') {
+        T.palabra(vis.ch, '¡SE CAE!', 470, 440, T.ROJO, 48, 1, true);
+        son && son.fallo();
+      } else if (x.t === 'llega') {
+        T.confeti(vis.ch, 320, 180, 34, [T.AMARILLO, T.ROJO, T.MENTA, T.PAPEL], 12, 1);
+        T.palabra(vis.ch, '¡EN ÓRBITA!', 320, 470, T.AMARILLO, 58, 1, true);
+        vis.temblor = 10;
+        son && son.sol();
+      }
+    }
+  }
+
+  ZZ.canales.espacio = {
+    id: 'espacio', num: 17, nombre: 'ESPACIO', orden: '¡DESPEGA!', hechoTxt: '¡EN ÓRBITA!',
+    pista: 'Toca muy deprisa para subir',
+    rotulo: 'CIENCIA FICCIÓN: «UN COHETE CON PRISA»',
+    color: C.cielo[2], color2: C.planeta, color3: T.AMARILLO,
+    todaLaPantalla: true, multitoque: true,
+    animo: x => (x.t === 'llega' ? 1 : x.t === 'cae' ? -1 : 0),
+    init, paso, puntuacion, casa, dibuja, efectos,
+  };
+})();
+//# sourceURL=zz/canales/espacio.js
+</script>
+<script>
 /* ZikZak · inglés
    El diccionario del idioma: la clave es el texto en castellano tal como está en el código.
      exactos   texto entero → traducción
@@ -4877,6 +5566,7 @@
       'CONTRA TI': 'VS MYSELF',
       '+100 zkcoins de hoy': '+100 zkcoins today',
       'SONIDO': 'SOUND',
+      'zkcoins de prueba': 'test zkcoins',
       'SÍ': 'ON',
       'ZikZak: duelos de minijuegos. Se juega tocando la pantalla.': 'ZikZak: minigame duels. Played by tapping the screen.',
 
@@ -5084,6 +5774,23 @@
       'ANTES DE DORMIR: «CONTANDO OVEJAS»': 'BEDTIME: “COUNTING SHEEP”',
       '¡ZZZ!': 'ZZZ!',
 
+      'CAZA': 'HUNT',
+      '¡APUNTA!': 'AIM!',
+      'Toca por delante del plato: el corcho tarda': 'Tap ahead of the plate: the cork is slow',
+      'CAZA MENOR: «LA VAJILLA DE LA ABUELA»': "SMALL GAME: “GRANDMA'S CHINA”",
+
+      'PESCA': 'FISH',
+      '¡PESCA!': 'FISH!',
+      'Mantén para bajar el anzuelo. Suelta y sube': 'Hold to sink the hook. Let go to rise',
+      'PESCA EN DIRECTO: «EL GUSANO VALIENTE»': 'FISHING LIVE: “THE BRAVE WORM”',
+      '¡A LA CESTA!': 'ALL ABOARD!',
+
+      'ESPACIO': 'SPACE',
+      '¡DESPEGA!': 'LIFT OFF!',
+      'Toca muy deprisa para subir': 'Tap fast to climb',
+      'CIENCIA FICCIÓN: «UN COHETE CON PRISA»': 'SCI-FI: “ROCKET IN A HURRY”',
+      '¡EN ÓRBITA!': 'IN ORBIT!',
+
       // --- lo que hay escrito en los decorados -----------------------------------------------------------------
       'SE BUSCA': 'WANTED',
       'VIVA O ABOLLADA': 'ALIVE OR DENTED',
@@ -5141,15 +5848,22 @@
       '¡POR UNA!': 'SO CLOSE!',
       '¡TE HAS LIADO!': 'LOST COUNT!',
       '¡TE DORMISTE!': 'DOZED OFF!',
+      '¡CRAS!': 'CRASH!',
+      '¡AL AIRE!': 'AIR SHOT!',
+      '¡NI UNO SANO!': 'ALL SMASHED!',
+      '¡PICÓ!': 'BITE!',
+      '¡QUÉ PIEZA!': 'BIG ONE!',
+      '¡UNA BOTA!': 'A BOOT!',
+      '¡CESTA LLENA!': 'FULL BUCKET!',
+      '¡SE CAE!': 'FALLING!',
     },
 
     patrones: [
       // título, placas y vestuario
       [/^Cuota: (\d+),(\d) % · (\d+) zkcoins de prueba$/, 'Share: $1.$2% · $3 test zkcoins'],
-      [/^Cuota: (\d+),(\d) % · (\d+) zk$/, 'Share: $1.$2% · $3 zk'],
+      [/^Cuota: (\d+),(\d) % · prueba (.+)$/, 'Share: $1.$2% · test $3'],
       [/^(\d+) zkcoins de prueba$/, '$1 test zkcoins'],
       [/^A (\d) CANALES$/, '$1 CHANNELS'],
-      [/^PRUEBA DE ASPECTO · (.+)$/, 'LOOK TEST · $1'],
       [/^Te faltan (\d+) zkcoins$/, 'Need $1 more zkcoins'],
       // canales y ensayo
       [/^MEJOR MARCA: (\d+)$/, 'BEST: $1'],
@@ -5660,7 +6374,7 @@
 (function () {
   'use strict';
   const ZZ = window.ZZ, C = ZZ.codigo = {};
-  const IDS = ['cocina', 'tiempo', 'western', 'concurso', 'teletienda', 'bricolaje', 'documental', 'musical', 'noticias', 'magia', 'deportes', 'terror', 'dibujos', 'noches'];      // este orden va dentro de los códigos: no se cambia
+  const IDS = ['cocina', 'tiempo', 'western', 'concurso', 'teletienda', 'bricolaje', 'documental', 'musical', 'noticias', 'magia', 'deportes', 'terror', 'dibujos', 'noches', 'caza', 'pesca', 'espacio'];      // este orden va dentro de los códigos: no se cambia
   const TIPOS = ['d', 'm', 'u'];
   const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 
@@ -5884,12 +6598,15 @@
     for (let i = A.botones.length - 1; i >= 0; i--) {
       if (dentro(A.botones[i], p)) { A.pulsado = A.botones[i].id; A.punteroBoton = ev.pointerId; return; }
     }
-    if (A.est === 'juego' && A.dedo === null) {
+    // multitoque: en los canales de tocar deprisa cuenta también el segundo dedo aunque el primero siga puesto
+    if (A.est === 'juego' && (A.dedo === null || A.ronda.canal.multitoque)) {
       const L = A.L, r = A.ronda;
       const enPantalla = p.x >= L.px && p.x <= L.px + PW && p.y >= L.py && p.y <= L.py + PH;
       if (enPantalla || r.canal.todaLaPantalla) {
-        A.dedo = ev.pointerId;
-        try { lienzo.setPointerCapture(ev.pointerId); } catch (e) { /* nada */ }
+        if (A.dedo === null) {
+          A.dedo = ev.pointerId;
+          try { lienzo.setPointerCapture(ev.pointerId); } catch (e) { /* nada */ }
+        }
         A.cola.push(aJuego(p, 'd'));
       }
       return;
@@ -6192,13 +6909,24 @@
   function cambiaPinta() { perfil.pinta = (perfil.pinta + 1) % P.PINTAS.length; guardaPerfil(); son.cara(); animo('yo', 1); publica({}); }
   function miPlaca(gg, L, conBoton) {
     const m = medidasPlacas(L);
-    // con el botón del vestuario al lado no cabe el texto entero: se abrevia para que no quede debajo
-    TV.placa(gg, 30, m.yB, 660, m.hB, { nombre: 'TÚ', sub: 'Cuota: ' + cuotaTxt(perfil.cuota) + ' · ' + perfil.zk + (conBoton ? ' zk' : ' zkcoins de prueba'), aspecto: miPinta(), expr: exprDe('yo', 'neutro'), t: A.t, golpe: A.caras.yo.golpe, color: T.AZUL, puntos: null });
+    // en el título las monedas van arriba, en grande (monedero): aquí queda la cuota y la versión de prueba
+    TV.placa(gg, 30, m.yB, 660, m.hB, { nombre: 'TÚ', sub: 'Cuota: ' + cuotaTxt(perfil.cuota) + ' · ' + (conBoton ? 'prueba ' + ZZ.VERSION : perfil.zk + ' zkcoins de prueba'), aspecto: miPinta(), expr: exprDe('yo', 'neutro'), t: A.t, golpe: A.caras.yo.golpe, color: T.AZUL, puntos: null });
     if (conBoton) {
       zona('pinta0', 30, m.yB, 300, m.hB, cambiaPinta);
       const bh = Math.min(58, m.hB * 0.5);
       boton(gg, 'pinta', 452, m.yB + (m.hB - bh) / 2 - 5, 222, bh, 'VESTUARIO', T.AMARILLO, () => ir('vestuario'), { tam: 21, fuera: true, ctxt: T.TINTA, fuente: T.F_UI, peso: 900 });
     }
+  }
+  // El monedero del título, bien a la vista: la moneda, la cifra en amarillo sobre tinta y debajo lo que es.
+  function monedero(gg, x, y) {
+    const txt = String(perfil.zk), an = Math.max(T.ancho(gg, txt, 46), T.ancho(gg, 'zkcoins de prueba', 16, T.F_UI, 900)) + 108;
+    T.rr(gg, x, y, an, 78, 39); T.pinta(gg, T.TINTA, 0); T.rr(gg, x, y, an, 78, 39); T.linea(gg, 4, T.AMARILLO);
+    const cy = y + 39 + Math.sin(A.t * 0.08) * 2;
+    T.vol(gg, c => T.circ(c, x + 42, cy, 29), T.AMARILLO, { sombra: '#E0A21A', dx: -4, dy: -5, w: 0 });
+    T.circ(gg, x + 42, cy, 29); T.linea(gg, 4, T.PAPEL);
+    T.texto(gg, 'Z', x + 42, cy + 2, 32, { color: T.TINTA, w: 0 });
+    T.texto(gg, txt, x + 84, y + 30, 46, { al: 'left', color: T.AMARILLO, w: 0 });
+    T.texto(gg, 'zkcoins de prueba', x + 85, y + 60, 16, ui(T.PAPEL, { al: 'left' }));
   }
   EST.titulo = {
     entra() { A.color = T.VIOLETA; A.duelo = null; A.ronda = null; bonoDiario(); publica({ est: 'menu', a: null, d: null, i: 0, f: 'espera', p: 0, r: [], m: [0, 0] }); },
@@ -6242,7 +6970,7 @@
     },
     fuera(gg, L) {
       const yb = Math.max(8, L.arriba - 150);
-      T.texto(gg, 'PRUEBA DE ASPECTO · ' + ZZ.VERSION, 30, yb + 34, 21, ui(T.PAPEL, { al: 'left' }));
+      monedero(gg, 26, Math.max(4, yb - 9));
       boton(gg, 'son', 610, yb, 80, 62, perfil.mudo ? 'NO' : 'SÍ', perfil.mudo ? T.mezcla(T.PAPEL, T.TINTA, 0.45) : T.AMARILLO,
         () => { perfil.mudo = !perfil.mudo; son.pon(perfil.mudo); guardaPerfil(); }, { tam: 25, fuera: true, ctxt: T.TINTA });
       T.texto(gg, 'SONIDO', 596, yb + 34, 21, ui(T.PAPEL, { al: 'right' }));
