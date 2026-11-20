@@ -45,7 +45,7 @@
   'use strict';
   const ZZ = window.ZZ = window.ZZ || {};
 
-  ZZ.VERSION = '0.9';
+  ZZ.VERSION = '1.0';
   ZZ.HZ = 60;          // pasos de lógica por segundo
   ZZ.PASOS = 300;      // cinco segundos
   ZZ.PW = 640;         // tamaño lógico de la pantalla de la tele
@@ -613,6 +613,14 @@
     burbujas: {
       bajo: [48, 48, 55, 55, 53, 53, 48, 48, 55, 48], onda: 'sine',
       mel: [84, 0, 88, 91, 0, 88, 84, 81, 0, 84, 88, 91, 0, 95, 91, 88, 84, 0, 81, 84],
+    },
+    equilibrista: {
+      bajo: [43, 43, 50, 50, 48, 48, 46, 46, 43, 43], onda: 'triangle',
+      mel: [72, 0, 76, 79, 0, 76, 72, 0, 67, 72, 0, 74, 76, 0, 72, 67, 0, 69, 72, 0],
+    },
+    revoltijo: {
+      bajo: [50, 50, 57, 57, 55, 55, 52, 52, 50, 50], onda: 'square',
+      mel: [79, 83, 86, 0, 83, 79, 88, 86, 0, 83, 79, 81, 86, 0, 88, 86, 83, 79, 0, 83],
     },
   };
   S.sintonia = function (id) {
@@ -2698,109 +2706,156 @@
 //# sourceURL=zz/canales/documental.js
 </script>
 <script>
-/* ZikZak · canal 8 · Musical · ¡AL RITMO!
-   Cuatro avisos de bombo. Se toca cada golpe y se puntúa el desvío medio. */
+/* ZikZak · canal 8 · Musical · ¡A TODO VOLUMEN!
+   Sigue los pulsos de la cabina. Si aparece PAUSA, escucha y no toques. */
 (function () {
   'use strict';
   const ZZ = window.ZZ, T = ZZ.tinta;
 
   const NIV = [null,
-    { golpes: [48, 96, 144, 192], tol: 14, silencio: -1 },
-    { golpes: [42, 78, 114, 150], tol: 11, silencio: 1 },
-    { golpes: [38, 66, 112, 139], tol: 9, silencio: -1 }];
-  const C = { fondo: '#7B4DFF', fondoS: '#4A2DA1', aro: '#FFC928', parche: '#F5E6C8', palo: '#C77A3D' };
+    { tiempos: [48, 96, 144, 192], tol: 14, pausa: -1 },
+    { tiempos: [42, 78, 114, 150], tol: 12, pausa: 1 },
+    { tiempos: [38, 66, 108, 136], tol: 9, pausa: 2 }];
+  const C = { fondo: '#11162F', noche: '#090D20', panel: '#22294B', tinta: '#111222', crema: '#FFF2D2', lima: '#D7FF57', rosa: '#FF4F9A', cyan: '#57E7F2', naranja: '#FFB347', violeta: '#8A70FF' };
 
   function init(semilla, nivel) {
-    const rng = ZZ.azar(semilla), N = NIV[nivel];
-    const variacion = nivel === 3 ? rng.entero(-2, 2) : 0;
-    return {
-      semilla, nivel, golpes: N.golpes.map((x, i) => x + (i ? variacion : 0)), tol: N.tol, silencio: N.silencio,
-      sig: 0, suma: 0, aciertos: 0, espera: 0, hecho: false, ev: [],
-    };
+    const rng = ZZ.azar(semilla), N = NIV[nivel], variacion = nivel === 3 ? rng.entero(-2, 2) : 0;
+    const beats = N.tiempos.map((n, i) => ({ n: n + (i ? variacion : 0), pausa: i === N.pausa, estado: 'pendiente', pts: 0 }));
+    return { semilla, nivel, beats, tol: N.tol, sig: 0, suma: 0, errores: 0, aciertosMax: beats.filter(b => !b.pausa).length, espera: 0, hecho: false, ev: [] };
   }
 
   function paso(e, entradas, n) {
-    for (let i = e.sig; i < e.golpes.length; i++) {
-      if (e.golpes[i] === n) e.ev.push({ t: 'aviso', i, silencio: i === e.silencio });
-      else break;
-    }
-    while (e.sig < e.golpes.length && n > e.golpes[e.sig] + e.tol) {
-      e.ev.push({ t: 'pierde', i: e.sig }); e.sig++;
-    }
+    for (const b of e.beats) if (b.n === n) e.ev.push({ t: 'aviso', pausa: b.pausa });
     for (const en of entradas) {
-      if (en.t !== 'd' || e.sig >= e.golpes.length) continue;
-      const err = n - e.golpes[e.sig];
-      if (Math.abs(err) <= e.tol * 2) {
-        const pts = Math.max(0, Math.round((1 - Math.abs(err) / (e.tol * 2)) * 1000));
-        e.suma += pts; e.aciertos++; e.ev.push({ t: 'golpe', i: e.sig, err, pts, bueno: pts >= 700 }); e.sig++;
+      if (en.t !== 'd') continue;
+      let mejor = null, distancia = 1e9;
+      for (const b of e.beats) {
+        const d = Math.abs(n - b.n);
+        if (b.estado === 'pendiente' && d <= e.tol * 2 && d < distancia) { mejor = b; distancia = d; }
+      }
+      if (!mejor) continue;
+      if (mejor.pausa) {
+        mejor.estado = 'error'; e.errores++; e.ev.push({ t: 'error' });
+      } else {
+        mejor.estado = 'acierto';
+        mejor.pts = Math.max(0, Math.round((1 - distancia / (e.tol * 2)) * 1000));
+        e.suma += mejor.pts; e.ev.push({ t: 'golpe', pts: mejor.pts, bueno: mejor.pts >= 700 });
       }
     }
-    if (e.sig >= e.golpes.length && ++e.espera > 34) e.hecho = true;
+    for (const b of e.beats) if (b.estado === 'pendiente' && n > b.n + e.tol * 2) {
+      b.estado = b.pausa ? 'pausa' : 'perdido';
+      if (!b.pausa) e.ev.push({ t: 'pierde' });
+    }
+    while (e.sig < e.beats.length && e.beats[e.sig].estado !== 'pendiente') e.sig++;
+    if (e.sig >= e.beats.length && ++e.espera > 32) e.hecho = true;
   }
 
-  function puntuacion(e) { return ZZ.lim(Math.round(e.suma / e.golpes.length), 0, 1000); }
+  function puntuacion(e) {
+    return ZZ.lim(Math.round((e.suma - e.errores * 220) / e.aciertosMax), 0, 1000);
+  }
 
   function casa(e, mem, rng, d, n) {
-    if (!mem.plan) mem.plan = e.golpes.map(t => t + Math.round(rng.campana() * ZZ.mix(8, 1, d)));
-    return e.sig < e.golpes.length && n === mem.plan[e.sig] ? [{ t: 'd', x: 320, y: 610 }] : [];
+    if (!mem.plan) mem.plan = e.beats.map(b => b.pausa ? null : b.n + Math.round(rng.campana() * ZZ.mix(8, 1, d)));
+    for (let i = 0; i < e.beats.length; i++) {
+      if (mem.plan[i] === n && e.beats[i].estado === 'pendiente') return [{ t: 'd', x: 320, y: 650 }];
+    }
+    return [];
   }
 
   function fondo(g) {
-    g.fillStyle = C.fondo; g.fillRect(0, 0, ZZ.PW, ZZ.PH);
-    g.fillStyle = T.trama(g, C.fondoS, 18, 3); g.fillRect(0, 0, ZZ.PW, ZZ.PH);
-    T.texto(g, 'MUSICAL', 320, 82, 48, { color: T.PAPEL, w: 9 });
-    T.texto(g, '¡AL RITMO!', 320, 142, 66, { color: C.aro, w: 11 });
-    T.vol(g, c => T.rr(c, 44, 216, 552, 30, 10), C.aro, { sombra: '#C58C10', dx: 0, dy: 9, w: 6 });
-    T.vol(g, c => T.rr(c, 0, 706, 640, 174, 0), C.fondoS, { sombra: '#2E1D6C', dx: 0, dy: 10, w: 0 });
+    const grad = g.createLinearGradient(0, 0, 0, 840);
+    grad.addColorStop(0, '#252052'); grad.addColorStop(0.55, C.fondo); grad.addColorStop(1, C.noche);
+    g.fillStyle = grad; g.fillRect(0, 0, 640, 840);
+    g.fillStyle = T.rayas(g, '#302850', 28, 5); g.fillRect(0, 0, 640, 680);
+    T.circ(g, 320, 414, 240); T.pinta(g, '#191B3A', 0);
+    for (const [x, y, r, c] of [[48, 166, 8, C.cyan], [585, 245, 10, C.rosa], [72, 557, 7, C.naranja], [563, 620, 6, C.lima], [108, 354, 5, C.rosa], [530, 420, 5, C.cyan]]) {
+      T.circ(g, x, y, r); T.pinta(g, c, 0);
+    }
+    T.vol(g, c => T.rr(c, 0, 692, 640, 170, 0), '#17142D', { sombra: C.noche, dx: 0, dy: 8, w: 0 });
+    T.texto(g, 'RADIO RELÁMPAGO', 320, 70, 27, { color: C.cyan, fuente: T.F_UI, peso: 900, w: 0 });
+    T.texto(g, '¡A TODO VOLUMEN!', 320, 125, 46, { color: C.crema, w: 8 });
   }
 
-  function cartelGolpes(g, e, vis) {
-    for (let i = 0; i < e.golpes.length; i++) {
-      const x = 104 + i * 144, d = Math.abs(vis.t - e.golpes[i]);
-      const cerca = d < 8, hecho = i < e.sig;
-      T.vol(g, c => T.circ(c, x, 300, cerca ? 49 : 40), hecho ? T.MENTA : cerca ? C.aro : T.PAPEL, { sombra: T.oscuro(hecho ? T.MENTA : cerca ? C.aro : T.PAPEL), dx: -7, dy: -8, w: 6 });
-      T.texto(g, String(i + 1), x, 300, 32, { color: T.TINTA, w: 0 });
-      if (i === e.silencio) T.texto(g, 'SILENCIO', x, 366, 16, { color: T.PAPEL, fuente: T.F_UI, peso: 900, w: 3 });
+  function lineaRitmo(g, e, vis) {
+    const x0 = 89, x1 = 551, y = 260, ancho = x1 - x0;
+    T.vol(g, c => T.rr(c, 48, 191, 544, 142, 24), C.panel, { sombra: C.noche, dx: 0, dy: 9, w: 5 });
+    T.texto(g, 'SIGUE LA SECUENCIA', 320, 215, 17, { color: C.crema, fuente: T.F_UI, peso: 900, w: 0 });
+    g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); T.linea(g, 8, '#525579');
+    const primero = e.beats[0].n - 22, ultimo = e.beats[e.beats.length - 1].n + 24;
+    const avance = ZZ.lim((vis.n - primero) / (ultimo - primero), 0, 1);
+    g.beginPath(); g.moveTo(x0, y); g.lineTo(x0 + avance * ancho, y); T.linea(g, 8, C.cyan);
+    for (let i = 0; i < e.beats.length; i++) {
+      const b = e.beats[i], x = x0 + i * ancho / (e.beats.length - 1);
+      const activa = b.estado === 'pendiente' && Math.abs(vis.n - b.n) <= e.tol * 2;
+      const color = b.estado === 'acierto' || b.estado === 'pausa' ? C.lima : b.estado === 'perdido' || b.estado === 'error' ? C.rosa : activa ? C.naranja : C.crema;
+      if (activa) { T.circ(g, x, y, 33 + Math.sin(vis.t * 0.22) * 3); T.pinta(g, color, 0); }
+      T.circ(g, x, y, activa ? 24 : 20); T.pinta(g, color, 4, C.tinta);
+      const marca = b.pausa ? 'Ⅱ' : b.estado === 'acierto' ? '✓' : b.estado === 'perdido' || b.estado === 'error' ? '×' : String(i + 1);
+      T.texto(g, marca, x, y + 1, b.pausa ? 22 : 20, { color: C.tinta, fuente: T.F_UI, peso: 900, w: 0 });
+      if (b.pausa) T.texto(g, 'PAUSA', x, 305, 13, { color: C.crema, fuente: T.F_UI, peso: 900, w: 0 });
     }
   }
 
-  function bombo(g, e, vis) {
-    const golpe = e.golpes.some(t => Math.abs(vis.t - t) < 7);
-    T.vol(g, c => T.rr(c, 175, 445, 290, 205, 54), C.palo, { sombra: '#7B3B22', dx: -10, dy: -12, w: 8 });
-    T.vol(g, c => T.circ(c, 320, 540, 106 + (golpe ? 7 : 0)), C.parche, { sombra: '#C9AC83', dx: -8, dy: -9, w: 7 });
-    T.circ(g, 320, 540, 27); T.pinta(g, C.aro, 7);
-    const a = golpe ? 0.18 : -0.08;
-    g.save(); g.translate(320, 540); g.rotate(a);
-    for (const sx of [-1, 1]) { T.tubo(g, c => { c.moveTo(sx * 70, -160); c.lineTo(sx * 35, 10); }, C.palo, 16, 5); }
-    g.restore();
-    T.texto(g, 'TOCA CADA GOLPE', 320, 756, 27, { color: T.PAPEL, fuente: T.F_UI, peso: 900, w: 4 });
+  function altavoz(g, e, vis) {
+    let pulso = 0;
+    for (const b of e.beats) pulso = Math.max(pulso, ZZ.lim(1 - Math.abs(vis.n - b.n) / 18, 0, 1));
+    // Ondas que saltan con cada pulso.
+    for (let i = 0; i < 3; i++) {
+      g.beginPath(); g.arc(320, 504, 128 + i * 12 + pulso * 4, -2.55, -0.58); T.linea(g, 5, i % 2 ? C.rosa : C.cyan);
+      g.beginPath(); g.arc(320, 504, 128 + i * 12 + pulso * 4, 0.58, 2.55); T.linea(g, 5, i % 2 ? C.rosa : C.cyan);
+    }
+    T.vol(g, c => T.rr(c, 105, 364, 430, 284, 32), C.rosa, { sombra: '#97295C', dx: -8, dy: -10, w: 8 });
+    T.vol(g, c => T.rr(c, 126, 384, 388, 238, 24), '#30345C', { sombra: '#17182C', dx: -4, dy: -6, w: 5 });
+    // Asa, pantalla y mandos.
+    T.vol(g, c => T.rr(c, 220, 338, 200, 31, 14), C.naranja, { sombra: '#9A4B3B', dx: -4, dy: -4, w: 5 });
+    T.vol(g, c => T.rr(c, 244, 407, 152, 46, 12), C.noche, { sombra: '#101225', dx: 0, dy: 0, w: 3 });
+    for (let i = 0; i < 9; i++) {
+      const h = 8 + ((i * 7 + Math.floor(vis.t / 3)) % 19) + pulso * (i % 3) * 5;
+      T.rr(g, 266 + i * 16, 441 - h, 8, h, 3); T.pinta(g, i % 2 ? C.lima : C.cyan, 0);
+    }
+    for (const [x, color] of [[196, C.cyan], [444, C.lima]]) {
+      T.vol(g, c => T.circ(c, x, 534, 76 + pulso * 4), color, { sombra: T.oscuro(color, 0.45), dx: -5, dy: -7, w: 6 });
+      T.circ(g, x, 534, 57 + pulso * 3); T.pinta(g, '#292D4D', 5);
+      T.circ(g, x, 534, 37); T.pinta(g, '#43496C', 4);
+      T.circ(g, x, 534, 11); T.pinta(g, C.naranja, 0);
+    }
+    for (const [x, color] of [[150, C.cyan], [320, C.lima], [490, C.naranja]]) {
+      T.circ(g, x, 590, 8); T.pinta(g, color, 0);
+    }
+    T.texto(g, 'BASS · 808', 320, 681, 15, { color: C.crema, fuente: T.F_UI, peso: 900, w: 0 });
   }
 
   function dibuja(g, e, vis) {
     T.capa(g, vis, 'musical', fondo);
-    cartelGolpes(g, e, vis); bombo(g, e, vis);
+    lineaRitmo(g, e, vis); altavoz(g, e, vis);
+    const actual = e.beats[e.sig];
+    const texto = actual ? (actual.pausa ? 'PAUSA: ¡NO TOQUES!' : 'TOCA AL OÍR EL BOM') : '¡SECUENCIA COMPLETA!';
+    T.vol(g, c => T.rr(c, 68, 730, 504, 65, 24), C.lima, { sombra: '#789A29', dx: 0, dy: 7, w: 5 });
+    T.texto(g, texto, 320, 761, 21, { color: C.tinta, fuente: T.F_UI, peso: 900, w: 0 });
     vis.ch.dibuja(g, 0); vis.ch.dibuja(g, 1);
   }
 
   function efectos(e, vis, ev, son) {
     for (const x of ev) {
-      if (x.t === 'aviso') { if (!x.silencio && son) son.tic(); }
+      if (x.t === 'aviso') { if (!x.pausa && son) son.tic(); }
       else if (x.t === 'golpe') {
-        T.estrellas(vis.ch, 320, 540, x.bueno ? 8 : 4, x.bueno ? T.AMARILLO : T.PAPEL, 10, x.bueno ? 20 : 13, 1);
-        T.palabra(vis.ch, x.bueno ? '¡A TIEMPO!' : '¡SIGUE!', 320, 160, x.bueno ? T.AMARILLO : T.PAPEL, 43, 1);
+        T.estrellas(vis.ch, 320, 505, x.bueno ? 10 : 5, x.bueno ? C.lima : C.crema, 11, x.bueno ? 23 : 14, 1);
+        T.palabra(vis.ch, x.bueno ? '¡EN EL BOM!' : '¡CASI!', 320, 158, x.bueno ? C.lima : C.crema, 43, 1);
         son && (x.bueno ? son.acierto() : son.golpe());
       } else if (x.t === 'pierde') {
-        T.palabra(vis.ch, '¡TE FUISTE!', 320, 160, T.ROJO, 43, 1); son && son.fallo();
+        T.palabra(vis.ch, '¡SE ESCAPÓ!', 320, 158, C.rosa, 40, 1); son && son.fallo();
+      } else if (x.t === 'error') {
+        T.palabra(vis.ch, '¡ERA PAUSA!', 320, 158, C.rosa, 40, 1); son && son.fallo();
       }
     }
   }
 
   ZZ.canales.musical = {
-    id: 'musical', num: 8, nombre: 'MUSICAL', orden: '¡AL RITMO!',
-    pista: 'Toca cuatro veces siguiendo los avisos',
-    rotulo: 'ORQUESTA DE SALÓN: «A TIEMPO»',
-    color: C.fondo, color2: T.ROJO, color3: T.AMARILLO,
-    animo: x => x.t === 'golpe' ? (x.pts >= 350 ? 1 : -1) : x.t === 'pierde' ? -1 : 0,
+    id: 'musical', num: 8, nombre: 'MUSICAL', orden: '¡A TODO VOLUMEN!',
+    pista: 'Sigue los pulsos y no toques durante la pausa',
+    rotulo: 'RADIO RELÁMPAGO: «EL BOM PERFECTO»',
+    color: '#222052', color2: C.rosa, color3: C.lima,
+    animo: x => x.t === 'golpe' ? (x.pts >= 350 ? 1 : -1) : x.t === 'pierde' || x.t === 'error' ? -1 : 0,
     init, paso, puntuacion, casa, dibuja, efectos,
   };
 })();
@@ -2942,6 +2997,255 @@
   };
 })();
 //# sourceURL=zz/canales/burbujas.js
+</script>
+<script>
+/* ZikZak · canal 10 · Equilibrista · ¡QUE NO CAIGA!
+   Contrapesa una torre de cacharros disparatados sobre una bandeja bamboleante. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ, T = ZZ.tinta;
+
+  const NIV = [null,
+    { pasos: 252, empuje: 0.012, peso: 0.00015, ruido: 0.00012, limite: 0.78 },
+    { pasos: 276, empuje: 0.015, peso: 0.00027, ruido: 0.00028, limite: 0.72 },
+    { pasos: 300, empuje: 0.018, peso: 0.00042, ruido: 0.00052, limite: 0.67 }];
+  const C = { fondo: '#173653', noche: '#10263D', madera: '#E5A34B', maderaS: '#A85E37', crema: '#FFF2CC', rojo: '#EF6472', turq: '#59D6C5', violeta: '#9A80D8', amarillo: '#FFD65A' };
+
+  function init(semilla, nivel) {
+    const rng = ZZ.azar(semilla), N = NIV[nivel];
+    const objetos = [
+      { w: 105, h: 44, c: C.turq, tipo: 0, peso: 0.8 },
+      { w: 76, h: 55, c: C.rojo, tipo: 1, peso: 1.1 },
+      { w: 116, h: 38, c: C.amarillo, tipo: 2, peso: 0.7 },
+      { w: 68, h: 57, c: C.violeta, tipo: 3, peso: 1.25 },
+      { w: 92, h: 42, c: '#F4F0E8', tipo: 4, peso: 0.9 }
+    ];
+    const torre = objetos.map((o, i) => ({ ...o, lado: (rng() < 0.5 ? -1 : 1) * (0.35 + rng() * 0.65), fase: rng() * 6.28, peso: o.peso * (nivel === 3 && i % 2 === 1 ? 1.65 : 1) }));
+    return { semilla, nivel, torre, ang: 0, vel: 0, pulso: 0, puntos: 0, cuenta: 0, toques: 0, pasos: 0, caida: false, hecho: false, ev: [] };
+  }
+
+  function paso(e, entradas, n) {
+    if (e.hecho) return;
+    const N = NIV[e.nivel];
+    for (const en of entradas) if (en.t === 'd') {
+      const lado = en.x < ZZ.PW / 2 ? -1 : 1;
+      e.vel += lado * N.empuje;
+      e.toques++;
+      e.ev.push({ t: 'toque', x: en.x, lado });
+    }
+    let carga = 0;
+    for (const o of e.torre) carga += o.lado * o.peso;
+    const irregular = e.nivel === 3 ? Math.sin(n * 0.19 + e.semilla % 97) * N.ruido : 0;
+    e.vel += (carga * N.peso + irregular) - e.ang * 0.012;
+    e.vel *= 0.965;
+    e.ang += e.vel;
+    e.pulso = Math.max(-0.22, Math.min(0.22, e.pulso * 0.92 + e.ang * 0.12));
+    const inestable = Math.abs(e.ang) > N.limite;
+    if (!inestable) { e.puntos += Math.max(0, 1 - Math.abs(e.ang) / N.limite); e.cuenta++; }
+    if (inestable && !e.caida) { e.caida = true; e.ev.push({ t: 'cae', lado: Math.sign(e.ang) }); }
+    e.pasos = n;
+    if (n >= N.pasos || (e.caida && n > Math.min(N.pasos, 180))) e.hecho = true;
+  }
+
+  function puntuacion(e) {
+    const max = Math.max(1, Math.min(e.pasos, NIV[e.nivel].pasos));
+    const base = Math.round(1000 * e.puntos / max);
+    return e.toques ? ZZ.lim(base, 0, 1000) : Math.min(100, base);
+  }
+
+  function casa(e, mem, rng, d, n) {
+    if (n % 10 !== 0 || e.hecho) return [];
+    const jitter = rng.campana() * (1 - d) * 0.018;
+    return [{ t: 'd', x: e.ang + e.vel > jitter ? 100 : 540, y: 420 }];
+  }
+
+  function fondo(g) {
+    g.fillStyle = C.fondo; g.fillRect(0, 0, ZZ.PW, ZZ.PH);
+    g.fillStyle = T.trama(g, C.noche, 20, 3); g.fillRect(0, 0, ZZ.PW, ZZ.PH);
+    for (const [x, y, r] of [[75, 210, 5], [552, 250, 8], [102, 560, 7], [520, 620, 5]]) { T.circ(g, x, y, r); T.pinta(g, C.amarillo, 0); }
+    T.texto(g, 'EQUILIBRISTA', 320, 76, 43, { color: T.PAPEL, w: 7 });
+    T.texto(g, '¡QUE NO CAIGA!', 320, 137, 48, { color: C.amarillo, w: 8 });
+    T.vol(g, c => T.rr(c, 0, 735, 640, 150, 0), C.noche, { sombra: '#091521', dx: 0, dy: 10, w: 0 });
+  }
+
+  function dibujaObjeto(g, o, y, inclinacion, t) {
+    g.save(); g.translate(o.lado * 26, y); g.rotate(inclinacion * (0.16 + o.peso * 0.04) + Math.sin(t * 0.08 + o.fase) * 0.025);
+    if (o.tipo === 0) {
+      T.vol(g, c => T.rr(c, -o.w / 2, -o.h / 2, o.w, o.h, 15), o.c, { sombra: T.oscuro(o.c, 0.28), dx: -5, dy: -7, w: 5 });
+      T.rr(g, -24, -9, 48, 17, 5); T.pinta(g, C.crema, 0);
+      T.texto(g, 'SOPA', 0, 0, 13, { color: T.noche, fuente: T.F_UI, peso: 900, w: 0 });
+    } else if (o.tipo === 1) {
+      T.vol(g, c => T.elip(c, 0, -2, 35, 29), o.c, { sombra: '#A83355', dx: -4, dy: -6, w: 5 });
+      T.rr(g, -28, -35, 56, 12, 5); T.pinta(g, C.amarillo, 3);
+    } else if (o.tipo === 2) {
+      T.vol(g, c => T.rr(c, -o.w / 2, -o.h / 2, o.w, o.h, 11), o.c, { sombra: '#C99627', dx: -4, dy: -5, w: 5 });
+      for (const x of [-28, 0, 28]) { T.circ(g, x, 0, 4); T.pinta(g, C.rojo, 0); }
+    } else if (o.tipo === 3) {
+      T.vol(g, c => T.rr(c, -25, -o.h / 2, 50, o.h, 12), o.c, { sombra: '#544389', dx: -4, dy: -5, w: 5 });
+      T.rr(g, -20, -o.h / 2 - 8, 40, 12, 5); T.pinta(g, C.amarillo, 2);
+    } else {
+      T.vol(g, c => T.elip(c, 0, 0, 39, 18), o.c, { sombra: '#BBAF9A', dx: -3, dy: -4, w: 5 });
+      T.elip(g, 0, 0, 24, 8); T.pinta(g, '#B6D9E4', 0);
+    }
+    g.restore();
+  }
+
+  function dibuja(g, e, vis) {
+    T.capa(g, vis, 'equilibrista', fondo);
+    const a = ZZ.lim(e.ang, -1, 1), cx = 320, baseY = 640;
+    // Bandeja y fulcro
+    T.vol(g, c => T.poli(c, [[cx - 24, 708], [cx + 24, 708], [cx + 8, 657], [cx - 8, 657]]), C.maderaS, { dx: -3, dy: -4, w: 5 });
+    g.save(); g.translate(cx, baseY); g.rotate(a * 0.55);
+    T.vol(g, c => T.rr(c, -228, -13, 456, 28, 13), C.madera, { sombra: C.maderaS, dx: -6, dy: -8, w: 6 });
+    T.rr(g, -205, -8, 410, 5, 2); T.pinta(g, C.crema, 0);
+    for (let i = 0; i < e.torre.length; i++) dibujaObjeto(g, e.torre[i], -42 - i * 52, a, vis.t);
+    g.restore();
+    T.vol(g, c => T.rr(c, 58, 744, 220, 70, 18), C.turq, { sombra: '#2D817B', dx: -6, dy: -7, w: 5 });
+    T.texto(g, 'IZQUIERDA', 168, 779, 18, { color: T.PAPEL, fuente: T.F_UI, peso: 900, w: 0 });
+    T.vol(g, c => T.rr(c, 362, 744, 220, 70, 18), C.rojo, { sombra: '#A83355', dx: -6, dy: -7, w: 5 });
+    T.texto(g, 'DERECHA', 472, 779, 18, { color: T.PAPEL, fuente: T.F_UI, peso: 900, w: 0 });
+    T.texto(g, e.caida ? '¡VUELCO DE MENAJE!' : 'TOCA EL LADO CONTRARIO AL BALANCEO', 320, 203, 19, { color: e.caida ? C.rojo : T.PAPEL, fuente: T.F_UI, peso: 900, w: 3 });
+    vis.ch.dibuja(g, 0); vis.ch.dibuja(g, 1);
+  }
+
+  function efectos(e, vis, ev, son) {
+    for (const x of ev) if (x.t === 'cae') {
+      T.palabra(vis.ch, '¡CATAPLÚM!', 320, 270, C.amarillo, 52, 1);
+      vis.temblor = 12; vis.parada = 2; son && son.fallo();
+    } else if (x.t === 'toque') son && son.golpe();
+  }
+
+  ZZ.canales.equilibrista = {
+    id: 'equilibrista', num: 10, nombre: 'EQUILIBRISTA', orden: '¡QUE NO CAIGA!',
+    pista: 'Toca izquierda o derecha para contrapesar la torre',
+    rotulo: 'CIRCO CASERO: «PLOMO, SOPA Y PLATOS»',
+    color: C.fondo, color2: C.turq, color3: C.amarillo,
+    animo: x => x.t === 'cae' ? -1 : x.t === 'toque' ? 0.2 : 0,
+    init, paso, puntuacion, casa, dibuja, efectos,
+  };
+})();
+//# sourceURL=zz/canales/equilibrista.js
+</script>
+<script>
+/* ZikZak · canal 11 · Revoltijo · ¡A SU SITIO!
+   Clasifica objetos disparatados: una mirada, un toque y a por la siguiente. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ, T = ZZ.tinta;
+  const C = { fondo: '#31234F', noche: '#211936', tarjeta: '#FFF4D8', tinta: '#30233E', lima: '#B7EF68', rosa: '#FF8D9B', azul: '#77D9E8', oro: '#FFD36A' };
+  const RONDAS = [
+    { caja: 'LA PLAYA', bien: ['Tostada con flotador', 'Cangrejo en chanclas', 'Sombrilla con bigote'], mal: ['Pingüino con bufanda', 'Tetera en pijama', 'Calcetín de oficina'] },
+    { caja: 'EL DESAYUNO', bien: ['Cereal de calcetines', 'Huevo con peluca', 'Tostada astronauta'], mal: ['Tiburón bibliotecario', 'Botas de gelatina', 'Paraguas dormilón'] },
+    { caja: 'EL ESPACIO', bien: ['Luna con patines', 'Cohete de queso', 'Alien con maletín'], mal: ['Bañera cantante', 'Pato de ascensor', 'Brócoli motero'] },
+    { caja: 'LA ORQUESTA', bien: ['Violín de fideos', 'Platillo volador', 'Trompeta con hipo'], mal: ['Sandalia con GPS', 'Taza peluquera', 'Nube de bolsillo'] },
+    { caja: 'EL BAÑO', bien: ['Patito con corbata', 'Jabón patinador', 'Toalla vampira'], mal: ['Helado de garaje', 'Búho en bañador', 'Silla de desayuno'] },
+    { caja: 'EL JARDÍN', bien: ['Tomate con bigote', 'Regadera dragón', 'Caracol repartidor'], mal: ['Lámpara submarina', 'Queso con paraguas', 'Tren de pantuflas'] },
+  ];
+  const NIV = [null, { rondas: 5, ventana: 51, opciones: 3 }, { rondas: 6, ventana: 43, opciones: 3 }, { rondas: 6, ventana: 40, opciones: 4 }];
+
+  function mezclar(a, rng) {
+    for (let i = a.length - 1; i > 0; i--) { const j = rng.entero(0, i); [a[i], a[j]] = [a[j], a[i]]; }
+    return a;
+  }
+  function crearRonda(rng, nivel, usada) {
+    let k = rng.entero(0, RONDAS.length - 1);
+    while (usada.includes(k)) k = (k + 1) % RONDAS.length;
+    usada.push(k);
+    const r = RONDAS[k], bien = rng.entero(0, r.bien.length - 1), mal = rng.entero(0, r.mal.length - 1);
+    const cartas = [{ texto: r.bien[bien], ok: true }, { texto: r.mal[mal], ok: false }, { texto: r.mal[(mal + 1) % r.mal.length], ok: false }];
+    if (nivel === 3) cartas.push({ texto: RONDAS[(k + 2) % RONDAS.length].bien[rng.entero(0, 2)], ok: false });
+    mezclar(cartas, rng);
+    return { caja: r.caja, cartas, correcta: cartas.findIndex(x => x.ok) };
+  }
+  function init(semilla, nivel) {
+    const rng = ZZ.azar(semilla), usadas = [], N = NIV[nivel], rondas = [];
+    for (let i = 0; i < N.rondas; i++) rondas.push(crearRonda(rng, nivel, usadas));
+    return { semilla, nivel, rondas, ronda: 0, inicio: 0, ventana: N.ventana, puntos: 0, respondidas: 0, seleccion: -1, acierto: false, espera: 0, hecho: false, ev: [] };
+  }
+  function responder(e, indice, n) {
+    if (e.hecho || e.espera > 0 || indice < 0 || indice >= e.rondas[e.ronda].cartas.length) return;
+    e.seleccion = indice; e.acierto = indice === e.rondas[e.ronda].correcta;
+    const trans = ZZ.lim(1 - (n - e.inicio) / e.ventana, 0, 1);
+    const pts = e.acierto ? Math.round(650 + 350 * trans) : 0;
+    e.puntos += pts; e.respondidas++; e.espera = 5;
+    e.ev.push({ t: 'respuesta', bien: e.acierto, pts });
+  }
+  function paso(e, entradas, n) {
+    if (e.hecho) return;
+    if (e.espera > 0 && --e.espera === 0) {
+      if (e.ronda + 1 >= e.rondas.length) e.hecho = true;
+      else { e.ronda++; e.inicio = n; e.seleccion = -1; }
+    }
+    if (e.espera > 0) return;
+    if (n - e.inicio >= e.ventana) {
+      e.respondidas++; e.ev.push({ t: 'respuesta', bien: false, pts: 0, fuera: true }); e.espera = 5; return;
+    }
+    for (const en of entradas) if (en.t === 'd') {
+      const cantidad = e.rondas[e.ronda].cartas.length;
+      const indice = ZZ.lim(Math.floor(en.x / 640 * cantidad), 0, cantidad - 1);
+      responder(e, indice, n); break;
+    }
+  }
+  function puntuacion(e) { return e.respondidas ? ZZ.lim(Math.round(e.puntos / e.rondas.length), 0, 1000) : 0; }
+  function casa(e, mem, rng, d, n) {
+    if (mem.ronda !== e.ronda) { mem.ronda = e.ronda; mem.paso = Math.min(e.inicio + e.ventana - 6, n + Math.round(ZZ.mix(30, 13, d) + rng.campana() * 5)); }
+    return n === mem.paso && e.espera === 0 ? [{ t: 'd', x: (e.rondas[e.ronda].correcta + 0.5) * 640 / e.rondas[e.ronda].cartas.length, y: 550 }] : [];
+  }
+  function textoTarjeta(g, texto, x, cy, ancho, tam) {
+    const lineas = [], palabras = texto.split(' ');
+    let linea = '';
+    for (const palabra of palabras) {
+      const prueba = linea ? linea + ' ' + palabra : palabra;
+      if (linea && T.ancho(g, prueba, tam, T.F_UI, 900) > ancho) { lineas.push(linea); linea = palabra; }
+      else linea = prueba;
+    }
+    if (linea) lineas.push(linea);
+    const alto = tam * 1.18, inicio = cy - (lineas.length - 1) * alto / 2;
+    lineas.forEach((s, i) => T.texto(g, s, x, inicio + i * alto, tam, { color: C.tinta, fuente: T.F_UI, peso: 900, w: 0 }));
+  }
+  function fondo(g) {
+    g.fillStyle = C.fondo; g.fillRect(0, 0, 640, 840);
+    g.fillStyle = T.trama(g, C.noche, 24, 3); g.fillRect(0, 0, 640, 840);
+    T.texto(g, 'REVOLTIJO', 320, 70, 43, { color: T.PAPEL, w: 8 });
+    T.texto(g, '¡A SU SITIO!', 320, 128, 52, { color: C.lima, w: 9 });
+    T.vol(g, c => T.rr(c, 24, 176, 592, 115, 24), C.tarjeta, { sombra: C.noche, dx: 0, dy: 9, w: 5 });
+  }
+  function dibuja(g, e, vis) {
+    T.capa(g, vis, 'revoltijo', fondo);
+    const r = e.rondas[e.ronda], cantidad = r.cartas.length;
+    T.texto(g, '¿QUÉ VA EN…?', 320, 208, 24, { color: C.tinta, fuente: T.F_UI, peso: 900, w: 2 });
+    T.texto(g, r.caja, 320, 257, 37, { color: '#6E45A0', w: 5 });
+    T.texto(g, 'RONDA ' + (e.ronda + 1) + ' / ' + e.rondas.length, 320, 337, 19, { color: T.PAPEL, fuente: T.F_UI, peso: 900, w: 2 });
+    const h = cantidad === 4 ? 104 : 132, gap = 13, w = (592 - gap * (cantidad - 1)) / cantidad;
+    for (let i = 0; i < cantidad; i++) {
+      const x = 24 + i * (w + gap), y = cantidad === 4 ? 416 : 412, elegida = e.seleccion === i;
+      const color = elegida ? (e.acierto ? C.lima : C.rosa) : C.tarjeta;
+      T.vol(g, c => T.rr(c, x, y, w, h, 17), color, { sombra: '#171326', dx: 0, dy: 8, w: 4 });
+      T.circ(g, x + w / 2, y + 27, 17); T.pinta(g, elegida ? C.tinta : C.azul, 0);
+      T.texto(g, String(i + 1), x + w / 2, y + 28, 17, { color: T.TINTA, fuente: T.F_UI, peso: 900, w: 0 });
+      textoTarjeta(g, r.cartas[i].texto, x + w / 2, y + h / 2 + 25, w - 14, cantidad === 4 ? 15 : 18);
+    }
+    const restante = ZZ.lim(1 - (vis.n - e.inicio) / e.ventana, 0, 1);
+    T.vol(g, c => T.rr(c, 62, 621, 516, 22, 11), '#131021', { dx: 0, dy: 0, w: 0 });
+    T.vol(g, c => T.rr(c, 62, 621, 516 * restante, 22, 11), restante > 0.35 ? C.lima : C.rosa, { dx: 0, dy: 0, w: 0 });
+    T.texto(g, 'TOCA UNA TARJETA · ¡SIN PENSAR MUCHO!', 320, 711, 20, { color: C.oro, fuente: T.F_UI, peso: 900, w: 3 });
+    vis.ch.dibuja(g, 0); vis.ch.dibuja(g, 1);
+  }
+  function efectos(e, vis, ev, son) {
+    for (const x of ev) if (x.t === 'respuesta') {
+      T.palabra(vis.ch, x.bien ? '¡QUÉ BUEN CAJÓN!' : x.fuera ? '¡SE FUE EL TREN!' : '¡AL CAJÓN EQUIVOCADO!', 320, 162, x.bien ? C.lima : C.rosa, 34, 1);
+      if (son) x.bien ? son.acierto() : son.fallo();
+    }
+  }
+  ZZ.canales.revoltijo = {
+    id: 'revoltijo', num: 11, nombre: 'REVOLTIJO', orden: '¡A SU SITIO!',
+    pista: 'Toca el objeto que pertenece a la categoría', rotulo: 'ORDEN RELÁMPAGO: «¡ESO NO VA AHÍ!»',
+    color: C.fondo, color2: C.rosa, color3: T.AMARILLO,
+    animo: x => x.t === 'respuesta' ? (x.bien ? 1 : -1) : 0,
+    init, paso, puntuacion, casa, dibuja, efectos,
+  };
+})();
+//# sourceURL=zz/canales/revoltijo.js
 </script>
 <script>
 /* ZikZak · tele
@@ -3422,7 +3726,7 @@
 (function () {
   'use strict';
   const ZZ = window.ZZ, C = ZZ.codigo = {};
-  const IDS = ['cocina', 'tiempo', 'western', 'concurso', 'teletienda', 'bricolaje', 'documental', 'musical', 'burbujas'];      // este orden va dentro de los códigos: no se cambia
+  const IDS = ['cocina', 'tiempo', 'western', 'concurso', 'teletienda', 'bricolaje', 'documental', 'musical', 'burbujas', 'equilibrista', 'revoltijo'];      // este orden va dentro de los códigos: no se cambia
   const TIPOS = ['d', 'm', 'u'];
   const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 
