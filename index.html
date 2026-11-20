@@ -45,7 +45,7 @@
   'use strict';
   const ZZ = window.ZZ = window.ZZ || {};
 
-  ZZ.VERSION = '0.3';
+  ZZ.VERSION = '0.3.1';
   ZZ.HZ = 60;          // pasos de lógica por segundo
   ZZ.PASOS = 300;      // cinco segundos
   ZZ.PW = 640;         // tamaño lógico de la pantalla de la tele
@@ -3557,11 +3557,17 @@
         if (A.te > 480) parrafo(gg, 'El servidor del directo no contesta. Mientras tanto podéis retaros con un código: «Con un amigo», «A distancia».', 320, 420, 500, 23, T.PAPEL, true);
       }
       else {
-        T.texto(gg, 'Aquí sale quien tiene la página abierta ahora mismo', 320, 134, 21, ui(T.PAPEL, { peso: 700 }));
+        T.texto(gg, (red.modo === 'web' ? 'Aquí sale quien ha abierto el enlace de tu sala' : 'Aquí sale quien tiene la página abierta ahora mismo'), 320, 134, 21, ui(T.PAPEL, { peso: 700 }));
         const gente = red.gente().slice(0, 4);
         if (!gente.length) {
           T.texto(gg, 'NADIE MÁS POR AQUÍ', 320, 320, 40, { color: T.PAPEL });
-          parrafo(gg, (red.modo === 'web' ? 'Pásale el enlace de esta página a tu amigo o amiga y dile que entre en «Con un amigo» y «A la sala».' : 'Comparte la página con tu amigo o amiga desde el menú Compartir y dile que entre en «Con un amigo».'), 320, 384, 500, 23, T.PAPEL, true);
+          parrafo(gg, (red.modo === 'web' && A.enlace > 0 ? 'Copiado. Pégalo en un mensaje: solo entra en tu sala quien abra ese enlace.' : red.modo === 'web' && A.enlace < 0 ? 'No se ha podido copiar solo. Usa «Compartir» del navegador: la dirección ya lleva tu sala.' : red.modo === 'web' ? 'Esta sala es solo tuya. Mándale su enlace a tu amigo o amiga y dile que entre en «Con un amigo» y «A la sala».' : 'Comparte la página con tu amigo o amiga desde el menú Compartir y dile que entre en «Con un amigo».'), 320, 384, 500, 23, T.PAPEL, true);
+          if (red.modo === 'web') {
+            boton(gg, 'enlace', 90, 470, 460, 96, A.enlace > 0 ? '¡COPIADO!' : 'COPIAR ENLACE', A.enlace > 0 ? T.AZUL : T.AMARILLO, () => {
+              const fin = ok => { A.enlace = ok ? 1 : -1; };
+              try { navigator.clipboard.writeText(location.href).then(() => fin(true), () => fin(false)); } catch (e) { fin(false); }
+            }, { tam: 40 });
+          }
         }
         gente.forEach((o, i) => {
           const y = 166 + i * 128;
