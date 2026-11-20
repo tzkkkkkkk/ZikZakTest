@@ -45,7 +45,7 @@
   'use strict';
   const ZZ = window.ZZ = window.ZZ || {};
 
-  ZZ.VERSION = '0.4';
+  ZZ.VERSION = '0.8';
   ZZ.HZ = 60;          // pasos de lógica por segundo
   ZZ.PASOS = 300;      // cinco segundos
   ZZ.PW = 640;         // tamaño lógico de la pantalla de la tele
@@ -593,6 +593,22 @@
     tiempo: {
       bajo: [41, 41, 46, 46, 48, 48, 41, 41, 48, 41], onda: 'triangle',
       mel: [65, 69, 72, 77, 81, 77, 72, 69, 70, 74, 77, 82, 79, 76, 72, 76, 77, 81, 84, 89],
+    },
+    teletienda: {
+      bajo: [52, 52, 55, 55, 59, 59, 55, 52, 55, 59], onda: 'triangle',
+      mel: [79, 82, 84, 82, 79, 76, 79, 82, 84, 87, 84, 82, 79, 76, 74, 79, 82, 87, 84, 82],
+    },
+    bricolaje: {
+      bajo: [43, 43, 46, 46, 48, 48, 43, 43, 46, 43], onda: 'square',
+      mel: [67, 67, 72, 0, 74, 72, 67, 64, 67, 0, 72, 74, 77, 74, 72, 67, 64, 67, 72, 74],
+    },
+    documental: {
+      bajo: [48, 48, 51, 51, 55, 55, 51, 51, 48, 48], onda: 'triangle',
+      mel: [72, 74, 76, 79, 76, 74, 72, 67, 69, 72, 74, 79, 81, 79, 76, 74, 72, 69, 67, 72],
+    },
+    musical: {
+      bajo: [45, 45, 45, 45, 48, 48, 43, 43, 45, 45], onda: 'square',
+      mel: [76, 0, 76, 79, 0, 81, 79, 76, 0, 74, 76, 79, 0, 81, 84, 81, 79, 0, 76, 74],
     },
   };
   S.sintonia = function (id) {
@@ -2259,6 +2275,532 @@
 //# sourceURL=zz/canales/concurso.js
 </script>
 <script>
+/* ZikZak · canal 5 · Teletienda · ¡LLENA!
+   Se mantiene el dedo para llenar un vaso y se suelta para parar justo en la raya.
+   La precisión manda: si el vaso rebosa, la venta se va a cero. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ, T = ZZ.tinta;
+
+  const NIV = [null,
+    { ancho: 196, vel: 0.011, base: 0.62, tol: 0.13, mueve: 0 },
+    { ancho: 166, vel: 0.016, base: 0.60, tol: 0.095, mueve: 0 },
+    { ancho: 136, vel: 0.021, base: 0.59, tol: 0.075, mueve: 1 }];
+  const C = { fondo: '#FF8A3C', fondoS: '#C9572A', balda: '#7B4DFF', vaso: '#D9F3FF', vasoS: '#79B9D1', liquido: '#21C58E', raya: '#FF3B4E', etiqueta: '#FFC928' };
+
+  function rayaEn(e, n) {
+    const N = NIV[e.nivel];
+    return ZZ.lim(e.base + (N.mueve ? Math.sin((n + (e.semilla % 61)) * 0.055) * 0.085 : 0), 0.43, 0.78);
+  }
+
+  function init(semilla, nivel) {
+    const rng = ZZ.azar(semilla), N = NIV[nivel];
+    return {
+      semilla, nivel, base: N.base + rng.entre(-0.025, 0.025), cantidad: 0, raya: 0,
+      llenando: false, resuelto: false, derrame: false, pts: 0, espera: 0, hecho: false, ev: [],
+    };
+  }
+
+  function resuelve(e) {
+    if (e.resuelto) return;
+    e.llenando = false; e.resuelto = true;
+    if (e.derrame || e.cantidad >= 0.95) {
+      e.derrame = true; e.pts = 0; e.ev.push({ t: 'derrame' }); return;
+    }
+    const N = NIV[e.nivel], err = e.raya - e.cantidad;
+    if (err < 0) {
+      e.derrame = true; e.pts = 0; e.ev.push({ t: 'derrame' }); return;
+    }
+    e.pts = Math.max(0, Math.round((1 - err / N.tol) * 1000));
+    e.ev.push({ t: 'sirve', err, pts: e.pts });
+  }
+
+  function paso(e, entradas, n) {
+    e.raya = rayaEn(e, n);
+    for (const en of entradas) {
+      if (en.t === 'd' && !e.resuelto && !e.llenando) {
+        e.llenando = true; e.ev.push({ t: 'empieza' });
+      } else if (en.t === 'u' && e.llenando) {
+        resuelve(e);
+      }
+    }
+    if (e.llenando) {
+      e.cantidad += NIV[e.nivel].vel;
+      if (e.cantidad >= 0.95) resuelve(e);
+    }
+    if (e.resuelto && ++e.espera > 34) e.hecho = true;
+  }
+
+  function puntuacion(e) { return e.resuelto ? ZZ.lim(e.pts, 0, 1000) : 0; }
+
+  // La casa llena con un pequeño error, pero siempre usa la misma semilla.
+  function casa(e, mem, rng, d, n) {
+    if (mem.soltar === undefined) {
+      mem.soltar = 0;
+      let mejor = 1e9;
+      for (let i = 8; i < 150; i++) {
+        const q = i * NIV[e.nivel].vel, raya = rayaEn(e, i), err = raya >= q ? raya - q : 1000 + q - raya;
+        if (err < mejor) { mejor = err; mem.soltar = i; }
+      }
+      mem.soltar = ZZ.lim(mem.soltar + Math.round(rng.campana() * ZZ.mix(8, 1, d)), 4, 145);
+    }
+    if (n === 0) return [{ t: 'd', x: 320, y: 520 }];
+    return n === mem.soltar ? [{ t: 'u', x: 320, y: 520 }] : [];
+  }
+
+  function fondo(g) {
+    g.fillStyle = C.fondo; g.fillRect(0, 0, ZZ.PW, ZZ.PH);
+    g.fillStyle = T.trama(g, C.fondoS, 18, 3); g.fillRect(0, 0, ZZ.PW, ZZ.PH);
+    T.texto(g, 'TELETIENDA', 320, 86, 48, { color: T.PAPEL, w: 9 });
+    T.texto(g, '¡LLENA!', 320, 145, 70, { color: C.etiqueta, w: 11 });
+    T.vol(g, c => T.rr(c, 44, 224, 552, 28, 10), C.balda, { sombra: T.oscuro(C.balda), dx: 0, dy: 9, w: 6 });
+    for (const x of [104, 320, 536]) {
+      T.vol(g, c => T.rr(c, x - 44, 170, 88, 58, 14), C.etiqueta, { dx: -6, dy: -6, w: 5 });
+      T.circ(g, x, 197, 14); T.pinta(g, C.fondoS, 4);
+    }
+    T.vol(g, c => T.rr(c, 0, 698, 640, 180, 0), C.fondoS, { sombra: '#7D2D2A', dx: 0, dy: 10, w: 0 });
+  }
+
+  function vaso(g, e, vis) {
+    const N = NIV[e.nivel], x = 320, y = 300, h = 340, w = N.ancho;
+    const arriba = y + h * (1 - e.cantidad);
+    T.vol(g, c => T.rr(c, x - w / 2, y, w, h, 20), C.vaso, { sombra: C.vasoS, dx: -9, dy: -10, w: 0 });
+    g.save();
+    T.rr(g, x - w / 2, y, w, h, 20); g.clip();
+    g.fillStyle = C.liquido; g.fillRect(x - w, arriba, w * 2, h + 30);
+    g.globalAlpha = 0.25; g.fillStyle = '#FFFFFF'; g.fillRect(x - w / 2 + 18, y, 18, h);
+    g.restore();
+    T.rr(g, x - w / 2, y, w, h, 20); T.linea(g, 8, T.TINTA);
+    const ry = y + h * (1 - e.raya);
+    g.beginPath(); g.moveTo(x - w / 2 - 28, ry); g.lineTo(x + w / 2 + 28, ry); T.linea(g, 10, C.raya);
+    T.texto(g, 'RAYA', x + w / 2 + 51, ry, 20, { color: C.raya, fuente: T.F_UI, peso: 900, w: 4 });
+    if (e.llenando) {
+      T.tubo(g, c => { c.moveTo(x, 242); c.lineTo(x, y + 4); }, C.liquido, 18, 5);
+      T.circ(g, x, 238, 16); T.pinta(g, C.liquido, 5);
+    }
+    if (e.derrame) {
+      for (const dx of [-52, -18, 18, 52]) {
+        T.tubo(g, c => { c.moveTo(x + dx, y + 20); c.lineTo(x + dx + dx * 0.15, y - 32); }, C.liquido, 9, 3);
+      }
+    }
+    T.texto(g, Math.round(e.cantidad * 100) + '%', x, y + h + 55, 42, { color: T.PAPEL, w: 7 });
+    T.texto(g, 'MANTÉN · SUELTA', x, 774, 25, { color: T.PAPEL, fuente: T.F_UI, peso: 900, w: 4 });
+  }
+
+  function dibuja(g, e, vis) {
+    T.capa(g, vis, 'teletienda', fondo);
+    vaso(g, e, vis);
+    vis.ch.dibuja(g, 0); vis.ch.dibuja(g, 1);
+  }
+
+  function efectos(e, vis, ev, son) {
+    for (const x of ev) {
+      if (x.t === 'sirve') {
+        const bien = x.pts >= 700;
+        T.estrellas(vis.ch, 320, 300, bien ? 10 : 5, bien ? T.AMARILLO : T.PAPEL, 10, bien ? 22 : 14, 1);
+        T.palabra(vis.ch, bien ? '¡A MEDIDA!' : '¡SERVIDO!', 320, 150, bien ? T.AMARILLO : T.PAPEL, 44, 1);
+        son && (bien ? son.acierto() : son.golpe());
+      } else if (x.t === 'derrame') {
+        T.palabra(vis.ch, '¡SE DERRAMA!', 320, 150, T.ROJO, 46, 1);
+        T.polvo(vis.ch, 320, 300, 8, T.AZUL, 7, 22, 1);
+        son && son.fallo();
+      }
+    }
+  }
+
+  ZZ.canales.teletienda = {
+    id: 'teletienda', num: 5, nombre: 'TELETIENDA', orden: '¡LLENA!',
+    pista: 'Mantén el dedo y suelta en la raya',
+    rotulo: 'OFERTA RELÁMPAGO: EL VASO JUSTO',
+    color: C.fondo, color2: T.MENTA, color3: T.AMARILLO,
+    arrastra: true,
+    animo: x => x.t === 'sirve' ? (x.pts >= 350 ? 1 : -1) : x.t === 'derrame' ? -1 : 0,
+    init, paso, puntuacion, casa, dibuja, efectos,
+  };
+})();
+//# sourceURL=zz/canales/teletienda.js
+</script>
+<script>
+/* ZikZak · canal 6 · Bricolaje · ¡CLAVA!
+   La barra sube y baja. Un golpe de martillo en el punto justo clava el clavo. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ, T = ZZ.tinta;
+
+  const NIV = [null,
+    { vel: 0.025, zona: 0.17, clavos: 1 },
+    { vel: 0.041, zona: 0.115, clavos: 1 },
+    { vel: 0.062, zona: 0.075, clavos: 2 }];
+  const C = { fondo: '#2D6BFF', fondoS: '#2146A8', madera: '#C77A3D', maderaS: '#8C4D2A', metal: '#C9D6E2', metalS: '#71879A', amarillo: '#FFC928' };
+
+  function fuerzaEn(e, n) {
+    const q = (e.fase + n * NIV[e.nivel].vel) % 2;
+    return q <= 1 ? q : 2 - q;
+  }
+
+  function init(semilla, nivel) {
+    const rng = ZZ.azar(semilla), N = NIV[nivel], clavos = [];
+    for (let i = 0; i < N.clavos; i++) clavos.push(ZZ.lim(rng.entre(0.46, 0.7) + (i ? rng.entre(-0.07, 0.07) : 0), 0.3, 0.78));
+    return {
+      semilla, nivel, fase: rng.entre(0, 2), clavos, activa: 0, fuerza: 0, golpes: 0,
+      espera: 0, cool: 0, suma: 0, resuelto: false, hecho: false, ev: [],
+    };
+  }
+
+  function golpe(e, n) {
+    if (e.resuelto || e.espera > 0 || e.cool > 0 || e.activa >= e.clavos.length) return;
+    const objetivo = e.clavos[e.activa], err = Math.abs(e.fuerza - objetivo), zona = NIV[e.nivel].zona;
+    const pts = Math.max(0, Math.round((1 - err / zona) * 1000));
+    e.suma += pts; e.golpes++; e.cool = 10;
+    e.ev.push({ t: 'golpe', pts, err, bueno: pts >= 700, y: e.fuerza });
+    e.activa++;
+    if (e.activa >= e.clavos.length) e.resuelto = true;
+    else e.espera = 20;
+  }
+
+  function paso(e, entradas, n) {
+    e.fuerza = fuerzaEn(e, n);
+    if (e.cool > 0) e.cool--;
+    if (e.espera > 0) e.espera--;
+    for (const en of entradas) if (en.t === 'd') golpe(e, n);
+    if (e.resuelto && ++e.espera > 32) e.hecho = true;
+  }
+
+  function puntuacion(e) { return ZZ.lim(Math.round(e.suma / e.clavos.length), 0, 1000); }
+
+  // La casa busca el siguiente paso cercano al punto justo y añade error según su destreza.
+  function casa(e, mem, rng, d, n) {
+    if (mem.golpes !== e.golpes) {
+      mem.golpes = e.golpes;
+      mem.paso = -1;
+      if (!e.resuelto) {
+        const desde = n + e.espera + 3, objetivo = e.clavos[e.activa];
+        let mejor = 1e9;
+        for (let i = desde; i < ZZ.PASOS - 5; i++) {
+          const err = Math.abs(fuerzaEn(e, i) - objetivo);
+          if (err < mejor) { mejor = err; mem.paso = i; }
+        }
+        mem.paso = ZZ.lim(mem.paso + Math.round(rng.campana() * ZZ.mix(18, 2, d)), desde, ZZ.PASOS - 2);
+      }
+    }
+    return n === mem.paso ? [{ t: 'd', x: 320, y: 350 }] : [];
+  }
+
+  function fondo(g) {
+    g.fillStyle = C.fondo; g.fillRect(0, 0, ZZ.PW, ZZ.PH);
+    g.fillStyle = T.trama(g, C.fondoS, 16, 3); g.fillRect(0, 0, ZZ.PW, ZZ.PH);
+    T.texto(g, 'BRICOLAJE', 320, 82, 46, { color: T.PAPEL, w: 9 });
+    T.texto(g, '¡CLAVA!', 320, 140, 70, { color: C.amarillo, w: 11 });
+    T.vol(g, c => T.rr(c, 52, 198, 536, 30, 10), C.madera, { sombra: C.maderaS, dx: 0, dy: 10, w: 6 });
+    for (const x of [110, 320, 530]) { T.vol(g, c => T.rr(c, x - 34, 148, 68, 54, 10), C.metal, { sombra: C.metalS, dx: -6, dy: -6, w: 5 }); }
+    T.vol(g, c => T.rr(c, 0, 700, 640, 180, 0), C.maderaS, { sombra: '#5E2D22', dx: 0, dy: 10, w: 0 });
+  }
+
+  function medidor(g, e) {
+    const x = 320, y = 244, h = 320, w = 92, zona = NIV[e.nivel].zona;
+    T.vol(g, c => T.rr(c, x - w / 2, y, w, h, 22), C.metal, { sombra: C.metalS, dx: -9, dy: -10, w: 8 });
+    const fy = y + h * (1 - e.fuerza), ty = y + h * (1 - e.clavos[e.activa < e.clavos.length ? e.activa : e.clavos.length - 1]);
+    const zh = h * zona;
+    T.rr(g, x - w / 2 - 18, ty - zh, w + 36, zh * 2, 14); T.pinta(g, C.amarillo, 0, T.TINTA); g.globalAlpha = 0.25; g.fillStyle = C.amarillo; g.fill(); g.globalAlpha = 1;
+    g.beginPath(); g.moveTo(x - 72, ty); g.lineTo(x + 72, ty); T.linea(g, 9, C.amarillo);
+    T.vol(g, c => T.rr(c, x - 25, fy - 18, 50, 36, 12), T.ROJO, { sombra: '#B51F34', dx: -6, dy: -6, w: 6 });
+    T.texto(g, 'PUNTO JUSTO', x, 600, 24, { color: C.amarillo, fuente: T.F_UI, peso: 900, w: 4 });
+  }
+
+  function martillo(g, e) {
+    const y = 615 - e.fuerza * 125;
+    g.save(); g.translate(470, y); g.rotate(-0.45 + Math.sin(e.fuerza * Math.PI) * 0.18);
+    T.tubo(g, c => { c.moveTo(-5, 8); c.lineTo(-72, 116); }, C.madera, 24, 6);
+    T.vol(g, c => T.rr(c, -62, -30, 132, 58, 15), C.metal, { sombra: C.metalS, dx: -7, dy: -8, w: 7 });
+    g.restore();
+  }
+
+  function dibuja(g, e, vis) {
+    T.capa(g, vis, 'bricolaje', fondo);
+    medidor(g, e);
+    T.vol(g, c => T.rr(c, 190, 676, 260, 96, 16), C.madera, { sombra: C.maderaS, dx: -8, dy: -10, w: 7 });
+    for (let i = 0; i < e.clavos.length; i++) {
+      const x = 280 + i * 80, clavado = i < e.activa;
+      T.tubo(g, c => { c.moveTo(x, 642); c.lineTo(x, 717 - (clavado ? 18 : 0)); }, C.metal, 12, 4);
+      T.vol(g, c => T.circ(c, x, 640, 19), clavado ? T.MENTA : C.metal, { sombra: C.metalS, dx: -5, dy: -5, w: 5 });
+    }
+    martillo(g, e);
+    T.texto(g, e.activa >= e.clavos.length ? '¡CLAVADO!' : 'TOCA PARA GOLPEAR', 320, 790, 25, { color: T.PAPEL, fuente: T.F_UI, peso: 900, w: 4 });
+    vis.ch.dibuja(g, 0); vis.ch.dibuja(g, 1);
+  }
+
+  function efectos(e, vis, ev, son) {
+    for (const x of ev) if (x.t === 'golpe') {
+      T.estrellas(vis.ch, 320, 680, x.bueno ? 9 : 4, x.bueno ? T.AMARILLO : T.PAPEL, 10, x.bueno ? 22 : 14, 1);
+      T.palabra(vis.ch, x.bueno ? '¡CLAVADO!' : x.pts ? '¡CASI!' : '¡FLOJO!', 320, 160, x.bueno ? T.AMARILLO : T.PAPEL, 46, 1);
+      son && (x.bueno ? son.clavado() : son.golpe());
+    }
+  }
+
+  ZZ.canales.bricolaje = {
+    id: 'bricolaje', num: 6, nombre: 'BRICOLAJE', orden: '¡CLAVA!',
+    pista: 'Toca cuando la barra esté en el punto justo',
+    rotulo: 'TALLER EN DIRECTO: «GOLPE SECO»',
+    color: C.fondo, color2: C.madera, color3: T.AMARILLO,
+    animo: x => x.t === 'golpe' ? (x.pts >= 350 ? 1 : -1) : 0,
+    init, paso, puntuacion, casa, dibuja, efectos,
+  };
+})();
+//# sourceURL=zz/canales/bricolaje.js
+</script>
+<script>
+/* ZikZak · canal 7 · Documental · ¡ATRAPA!
+   Una mosca cruza la escena. Toca cuando esté delante de la rana; la avispa no se toca. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ, T = ZZ.tinta;
+
+  const NIV = [null,
+    { vel: 4.6, inicio: 50, onda: 0, tol: 105, avispa: false },
+    { vel: 6.2, inicio: 44, onda: 34, tol: 88, avispa: false },
+    { vel: 7.6, inicio: 40, onda: 58, tol: 76, avispa: true }];
+  const C = { fondo: '#2A7F62', fondoS: '#18503F', hoja: '#43B97B', rana: '#5FD06C', ranaS: '#2D914A', ala: '#F5E6C8', avispa: '#FFC928' };
+
+  function objeto(e, tipo, n) {
+    const N = NIV[e.nivel], o = tipo === 'mosca' ? e.mosca : e.avispa;
+    if (!o || n < o.inicio) return null;
+    const t = n - o.inicio, onda = tipo === 'mosca' ? N.onda : N.onda * 0.45;
+    return { x: -70 + t * o.vel, y: o.y + Math.sin(t * (tipo === 'mosca' ? 0.075 : 0.11)) * onda, t };
+  }
+
+  function init(semilla, nivel) {
+    const rng = ZZ.azar(semilla), N = NIV[nivel];
+    return {
+      semilla, nivel,
+      mosca: { inicio: N.inicio, vel: N.vel, y: rng.entre(300, 410) },
+      avispa: N.avispa ? { inicio: N.inicio + 90, vel: N.vel + 1.1, y: 270 } : null,
+      moscaPos: null, avispaPos: null, atrapada: false, fallo: false, pts: 0, espera: 0, hecho: false, ev: [],
+    };
+  }
+
+  function paso(e, entradas, n) {
+    e.moscaPos = objeto(e, 'mosca', n);
+    e.avispaPos = objeto(e, 'avispa', n);
+    if (!e.atrapada && !e.fallo) {
+      for (const en of entradas) {
+        if (en.t !== 'd') continue;
+        const a = e.avispaPos && e.avispaPos.x > -20 && e.avispaPos.x < 660 ? e.avispaPos : null;
+        const m = e.moscaPos && e.moscaPos.x > -20 && e.moscaPos.x < 660 ? e.moscaPos : null;
+        if (a && Math.abs(a.x - 320) < 120) {
+          e.fallo = true; e.pts = 0; e.ev.push({ t: 'avispa', x: a.x, y: a.y }); break;
+        }
+        if (m && Math.abs(m.x - 320) < NIV[e.nivel].tol) {
+          const err = Math.abs(m.x - 320);
+          e.pts = ZZ.lim(Math.round((1 - err / NIV[e.nivel].tol) * 1000), 0, 1000);
+          e.atrapada = true; e.ev.push({ t: 'atrapa', x: m.x, y: m.y, pts: e.pts }); break;
+        }
+        e.ev.push({ t: 'aire' });
+      }
+    }
+    if (!e.atrapada && !e.fallo && e.moscaPos && e.moscaPos.x > 700) { e.fallo = true; e.ev.push({ t: 'pasa' }); }
+    if ((e.atrapada || e.fallo) && ++e.espera > 34) e.hecho = true;
+  }
+
+  function puntuacion(e) { return e.atrapada ? ZZ.lim(e.pts, 0, 1000) : 0; }
+
+  function casa(e, mem, rng, d, n) {
+    if (mem.paso === undefined) {
+      let mejor = 1e9, objetivo = e.mosca.inicio;
+      for (let i = e.mosca.inicio; i < ZZ.PASOS - 5; i++) {
+        const p = objeto(e, 'mosca', i), err = Math.abs(p.x - 320);
+        if (err < mejor) { mejor = err; objetivo = i; }
+      }
+      mem.paso = ZZ.lim(objetivo + Math.round(rng.campana() * ZZ.mix(30, 4, d)), e.mosca.inicio, ZZ.PASOS - 2);
+    }
+    return n === mem.paso ? [{ t: 'd', x: 320, y: 500 }] : [];
+  }
+
+  function fondo(g) {
+    g.fillStyle = C.fondo; g.fillRect(0, 0, ZZ.PW, ZZ.PH);
+    g.fillStyle = T.trama(g, C.fondoS, 18, 3); g.fillRect(0, 0, ZZ.PW, ZZ.PH);
+    T.texto(g, 'DOCUMENTAL', 320, 82, 43, { color: T.PAPEL, w: 9 });
+    T.texto(g, '¡ATRAPA!', 320, 140, 70, { color: T.AMARILLO, w: 11 });
+    for (const [x, y, r] of [[70, 220, 70], [555, 270, 90], [84, 520, 80], [566, 570, 70]]) {
+      T.vol(g, c => T.elip(c, x, y, r, r * 0.42, -0.4), C.hoja, { sombra: C.fondoS, dx: -6, dy: -8, w: 5 });
+    }
+    T.vol(g, c => T.rr(c, 0, 742, 640, 140, 0), C.fondoS, { sombra: '#12382F', dx: 0, dy: 10, w: 0 });
+  }
+
+  function rana(g, e, vis) {
+    T.vol(g, c => T.rr(c, 225, 585, 190, 145, 68), C.rana, { sombra: C.ranaS, dx: -10, dy: -12, w: 8 });
+    for (const x of [265, 375]) {
+      T.vol(g, c => T.circ(c, x, 578, 36), C.rana, { sombra: C.ranaS, dx: -7, dy: -8, w: 7 });
+      T.circ(g, x, 574, 12); T.pinta(g, T.TINTA, 0);
+    }
+    T.elip(g, 320, 655, 58, 24); T.pinta(g, '#1C503B', 6);
+    if (vis.lengua > vis.t) {
+      const p = e.moscaPos || { x: 320, y: 390 };
+      T.tubo(g, c => { c.moveTo(320, 652); c.lineTo(p.x, p.y); }, T.ROJO, 12, 5);
+    }
+  }
+
+  function mosca(g, p, t) {
+    g.save(); g.translate(p.x, p.y); g.rotate(Math.sin(t * 0.12) * 0.18);
+    T.vol(g, c => T.elip(c, 0, 0, 19, 14), T.TINTA, { sombra: '#000000', dx: -4, dy: -5, w: 4 });
+    for (const dx of [-18, 18]) { T.elip(g, dx, -15, 24, 12, dx < 0 ? -0.4 : 0.4); T.pinta(g, C.ala, 4); }
+    T.circ(g, -6, -3, 4); T.circ(g, 6, -3, 4); T.pinta(g, T.ROJO, 0);
+    g.restore();
+  }
+
+  function avispa(g, p, t) {
+    g.save(); g.translate(p.x, p.y); g.rotate(Math.sin(t * 0.13) * 0.12);
+    T.vol(g, c => T.elip(c, 0, 0, 24, 15), C.avispa, { sombra: '#C88D13', dx: -5, dy: -5, w: 5 });
+    for (const dx of [-9, 9]) { g.beginPath(); g.moveTo(dx, -6); g.lineTo(dx + 7, 8); T.linea(g, 7, T.TINTA); }
+    for (const dx of [-22, 22]) { T.elip(g, dx, -18, 22, 10, dx < 0 ? -0.4 : 0.4); T.pinta(g, C.ala, 4); }
+    g.restore();
+  }
+
+  function dibuja(g, e, vis) {
+    T.capa(g, vis, 'documental', fondo);
+    const m = e.moscaPos, a = e.avispaPos;
+    if (m && m.x > -90 && m.x < 730 && !e.atrapada) mosca(g, m, vis.t);
+    if (a && a.x > -90 && a.x < 730 && !e.fallo) avispa(g, a, vis.t);
+    rana(g, e, vis);
+    T.texto(g, e.nivel === 3 ? 'MOSCA · ¡CUIDADO CON LA AVISPA!' : 'TOCA CUANDO PASE FRENTE A LA RANA', 320, 790, e.nivel === 3 ? 19 : 22, { color: T.PAPEL, fuente: T.F_UI, peso: 900, w: 4 });
+    vis.ch.dibuja(g, 0); vis.ch.dibuja(g, 1);
+  }
+
+  function efectos(e, vis, ev, son) {
+    for (const x of ev) {
+      if (x.t === 'atrapa') {
+        vis.lengua = vis.t + 9;
+        T.estrellas(vis.ch, x.x, x.y, x.pts >= 700 ? 10 : 5, T.AMARILLO, 11, 22, 1);
+        T.palabra(vis.ch, x.pts >= 700 ? '¡DELICIOSO!' : '¡A LA LENGUA!', 320, 160, T.AMARILLO, 42, 1);
+        son && (x.pts >= 700 ? son.acierto() : son.golpe());
+      } else if (x.t === 'avispa') {
+        T.palabra(vis.ch, '¡ESA NO!', 320, 160, T.ROJO, 52, 1); vis.temblor = 12; son && son.fallo();
+      } else if (x.t === 'pasa') {
+        T.palabra(vis.ch, '¡SE ESCAPA!', 320, 160, T.PAPEL, 46, 1); son && son.fallo();
+      }
+    }
+  }
+
+  ZZ.canales.documental = {
+    id: 'documental', num: 7, nombre: 'DOCUMENTAL', orden: '¡ATRAPA!',
+    pista: 'Toca cuando la mosca pase frente a la rana',
+    rotulo: 'NATURALEZA EN DIRECTO: «LA LENGUA»',
+    color: C.fondo, color2: T.MENTA, color3: T.AMARILLO,
+    animo: x => x.t === 'atrapa' ? (x.pts >= 350 ? 1 : -1) : (x.t === 'avispa' || x.t === 'pasa') ? -1 : 0,
+    init, paso, puntuacion, casa, dibuja, efectos,
+  };
+})();
+//# sourceURL=zz/canales/documental.js
+</script>
+<script>
+/* ZikZak · canal 8 · Musical · ¡AL RITMO!
+   Cuatro avisos de bombo. Se toca cada golpe y se puntúa el desvío medio. */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ, T = ZZ.tinta;
+
+  const NIV = [null,
+    { golpes: [48, 96, 144, 192], tol: 14, silencio: -1 },
+    { golpes: [42, 78, 114, 150], tol: 11, silencio: 1 },
+    { golpes: [38, 66, 112, 139], tol: 9, silencio: -1 }];
+  const C = { fondo: '#7B4DFF', fondoS: '#4A2DA1', aro: '#FFC928', parche: '#F5E6C8', palo: '#C77A3D' };
+
+  function init(semilla, nivel) {
+    const rng = ZZ.azar(semilla), N = NIV[nivel];
+    const variacion = nivel === 3 ? rng.entero(-2, 2) : 0;
+    return {
+      semilla, nivel, golpes: N.golpes.map((x, i) => x + (i ? variacion : 0)), tol: N.tol, silencio: N.silencio,
+      sig: 0, suma: 0, aciertos: 0, espera: 0, hecho: false, ev: [],
+    };
+  }
+
+  function paso(e, entradas, n) {
+    for (let i = e.sig; i < e.golpes.length; i++) {
+      if (e.golpes[i] === n) e.ev.push({ t: 'aviso', i, silencio: i === e.silencio });
+      else break;
+    }
+    while (e.sig < e.golpes.length && n > e.golpes[e.sig] + e.tol) {
+      e.ev.push({ t: 'pierde', i: e.sig }); e.sig++;
+    }
+    for (const en of entradas) {
+      if (en.t !== 'd' || e.sig >= e.golpes.length) continue;
+      const err = n - e.golpes[e.sig];
+      if (Math.abs(err) <= e.tol * 2) {
+        const pts = Math.max(0, Math.round((1 - Math.abs(err) / (e.tol * 2)) * 1000));
+        e.suma += pts; e.aciertos++; e.ev.push({ t: 'golpe', i: e.sig, err, pts, bueno: pts >= 700 }); e.sig++;
+      }
+    }
+    if (e.sig >= e.golpes.length && ++e.espera > 34) e.hecho = true;
+  }
+
+  function puntuacion(e) { return ZZ.lim(Math.round(e.suma / e.golpes.length), 0, 1000); }
+
+  function casa(e, mem, rng, d, n) {
+    if (!mem.plan) mem.plan = e.golpes.map(t => t + Math.round(rng.campana() * ZZ.mix(8, 1, d)));
+    return e.sig < e.golpes.length && n === mem.plan[e.sig] ? [{ t: 'd', x: 320, y: 610 }] : [];
+  }
+
+  function fondo(g) {
+    g.fillStyle = C.fondo; g.fillRect(0, 0, ZZ.PW, ZZ.PH);
+    g.fillStyle = T.trama(g, C.fondoS, 18, 3); g.fillRect(0, 0, ZZ.PW, ZZ.PH);
+    T.texto(g, 'MUSICAL', 320, 82, 48, { color: T.PAPEL, w: 9 });
+    T.texto(g, '¡AL RITMO!', 320, 142, 66, { color: C.aro, w: 11 });
+    T.vol(g, c => T.rr(c, 44, 216, 552, 30, 10), C.aro, { sombra: '#C58C10', dx: 0, dy: 9, w: 6 });
+    T.vol(g, c => T.rr(c, 0, 706, 640, 174, 0), C.fondoS, { sombra: '#2E1D6C', dx: 0, dy: 10, w: 0 });
+  }
+
+  function cartelGolpes(g, e, vis) {
+    for (let i = 0; i < e.golpes.length; i++) {
+      const x = 104 + i * 144, d = Math.abs(vis.t - e.golpes[i]);
+      const cerca = d < 8, hecho = i < e.sig;
+      T.vol(g, c => T.circ(c, x, 300, cerca ? 49 : 40), hecho ? T.MENTA : cerca ? C.aro : T.PAPEL, { sombra: T.oscuro(hecho ? T.MENTA : cerca ? C.aro : T.PAPEL), dx: -7, dy: -8, w: 6 });
+      T.texto(g, String(i + 1), x, 300, 32, { color: T.TINTA, w: 0 });
+      if (i === e.silencio) T.texto(g, 'SILENCIO', x, 366, 16, { color: T.PAPEL, fuente: T.F_UI, peso: 900, w: 3 });
+    }
+  }
+
+  function bombo(g, e, vis) {
+    const golpe = e.golpes.some(t => Math.abs(vis.t - t) < 7);
+    T.vol(g, c => T.rr(c, 175, 445, 290, 205, 54), C.palo, { sombra: '#7B3B22', dx: -10, dy: -12, w: 8 });
+    T.vol(g, c => T.circ(c, 320, 540, 106 + (golpe ? 7 : 0)), C.parche, { sombra: '#C9AC83', dx: -8, dy: -9, w: 7 });
+    T.circ(g, 320, 540, 27); T.pinta(g, C.aro, 7);
+    const a = golpe ? 0.18 : -0.08;
+    g.save(); g.translate(320, 540); g.rotate(a);
+    for (const sx of [-1, 1]) { T.tubo(g, c => { c.moveTo(sx * 70, -160); c.lineTo(sx * 35, 10); }, C.palo, 16, 5); }
+    g.restore();
+    T.texto(g, 'TOCA CADA GOLPE', 320, 756, 27, { color: T.PAPEL, fuente: T.F_UI, peso: 900, w: 4 });
+  }
+
+  function dibuja(g, e, vis) {
+    T.capa(g, vis, 'musical', fondo);
+    cartelGolpes(g, e, vis); bombo(g, e, vis);
+    vis.ch.dibuja(g, 0); vis.ch.dibuja(g, 1);
+  }
+
+  function efectos(e, vis, ev, son) {
+    for (const x of ev) {
+      if (x.t === 'aviso') { if (!x.silencio && son) son.tic(); }
+      else if (x.t === 'golpe') {
+        T.estrellas(vis.ch, 320, 540, x.bueno ? 8 : 4, x.bueno ? T.AMARILLO : T.PAPEL, 10, x.bueno ? 20 : 13, 1);
+        T.palabra(vis.ch, x.bueno ? '¡A TIEMPO!' : '¡SIGUE!', 320, 160, x.bueno ? T.AMARILLO : T.PAPEL, 43, 1);
+        son && (x.bueno ? son.acierto() : son.golpe());
+      } else if (x.t === 'pierde') {
+        T.palabra(vis.ch, '¡TE FUISTE!', 320, 160, T.ROJO, 43, 1); son && son.fallo();
+      }
+    }
+  }
+
+  ZZ.canales.musical = {
+    id: 'musical', num: 8, nombre: 'MUSICAL', orden: '¡AL RITMO!',
+    pista: 'Toca cuatro veces siguiendo los avisos',
+    rotulo: 'ORQUESTA DE SALÓN: «A TIEMPO»',
+    color: C.fondo, color2: T.ROJO, color3: T.AMARILLO,
+    animo: x => x.t === 'golpe' ? (x.pts >= 350 ? 1 : -1) : x.t === 'pierde' ? -1 : 0,
+    init, paso, puntuacion, casa, dibuja, efectos,
+  };
+})();
+//# sourceURL=zz/canales/musical.js
+</script>
+<script>
 /* ZikZak · tele
    El marco común: el aparato, la mecha de la cuenta atrás, las placas de los jugadores,
    la nieve del zapeo, la orden en letras gordas y los rótulos. */
@@ -2737,7 +3279,7 @@
 (function () {
   'use strict';
   const ZZ = window.ZZ, C = ZZ.codigo = {};
-  const IDS = ['cocina', 'tiempo', 'western', 'concurso'];      // este orden va dentro de los códigos: no se cambia
+  const IDS = ['cocina', 'tiempo', 'western', 'concurso', 'teletienda', 'bricolaje', 'documental', 'musical'];      // este orden va dentro de los códigos: no se cambia
   const TIPOS = ['d', 'm', 'u'];
   const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 
