@@ -45,7 +45,7 @@
   'use strict';
   const ZZ = window.ZZ = window.ZZ || {};
 
-  ZZ.VERSION = '1.3';
+  ZZ.VERSION = '1.3.1';
   ZZ.HZ = 60;          // pasos de lógica por segundo
   ZZ.PASOS = 300;      // cinco segundos: lo que dura un canal si no dice otra cosa
   ZZ.PW = 640;         // tamaño lógico de la pantalla de la tele
@@ -3888,9 +3888,9 @@
     for (let k = 0; k < 2; k++) for (let i = 0; i < 4; i++) {
       const x = k * 640 + i * 160, cx = x + 80, cy = 36;
       T.vol(g, c => T.rr(c, x + 3, 6, 154, 60, 6), cols[i], { sombra: '#D9CDB3', dx: 0, dy: -9, w: 6 });
-      if (i === 0) { T.estrella(g, cx, cy, 20, 9, 5, -0.3); T.pinta(g, T.ROJO, 4); }
+      if (i === 0) { T.estrella(g, cx, cy, 20, 9, 5, -0.3); T.pinta(g, T.AZUL, 4); }
       else if (i === 1) { T.poli(g, [[cx + 6, cy - 22], [cx - 13, cy + 3], [cx - 1, cy + 3], [cx - 7, cy + 22], [cx + 13, cy - 4], [cx + 1, cy - 4]]); T.pinta(g, T.AMARILLO, 4); }
-      else if (i === 2) { T.circ(g, cx - 16, cy, 13); T.pinta(g, T.AZUL, 4); T.circ(g, cx + 16, cy, 13); T.pinta(g, T.ROJO, 4); }
+      else if (i === 2) { T.circ(g, cx - 16, cy, 13); T.pinta(g, T.AZUL, 4); T.circ(g, cx + 16, cy, 13); T.pinta(g, T.VIOLETA, 4); }
       else { T.rr(g, cx - 30, cy - 12, 60, 24, 12); T.pinta(g, T.MENTA, 4); }
     }
   }
@@ -3936,7 +3936,7 @@
 
   // Un dirigible con cara cruza el cielo.
   function dirigible(g, t) {
-    const x = 760 - ((t * 0.4) % 980), y = 96 + Math.sin(t * 0.03) * 6;
+    const x = 330 + Math.sin(t * 0.008) * 150, y = 96 + Math.sin(t * 0.03) * 6;
     g.save(); g.translate(x, y);
     T.poli(g, [[58, 0], [96, -30], [96, 30]]); T.pinta(g, T.ROJO, 5);
     T.vol(g, c => T.rr(c, -24, 30, 48, 18, 7), '#2B2536', { sombra: T.TINTA, dx: 0, dy: -5, w: 5 });
@@ -3954,9 +3954,9 @@
     const bote = aire ? 0 : Math.abs(Math.sin(fase)) * 18;
     const u = aire ? (n - e.salto) / J : 0;
     let sx = 1, sy = 1;
-    if (aire) { const k = Math.cos(u * Math.PI); sy = 1 + k * 0.15; sx = 1 - k * 0.1; }
+    if (aire) { const k = Math.cos(u * Math.PI); sy = 1 + k * 0.28; sx = 1 - k * 0.17; }
     else { const k = Math.abs(Math.cos(fase)); sy = 1 - k * 0.09; sx = 1 + k * 0.06; }
-    if (vis.aterriza !== undefined && t - vis.aterriza < 7) { const k = 1 - (t - vis.aterriza) / 7; sy = 1 - 0.22 * k; sx = 1 + 0.16 * k; }
+    if (vis.aterriza !== undefined && t - vis.aterriza < 7) { const k = 1 - (t - vis.aterriza) / 7; sy = 1 - 0.34 * k; sx = 1 + 0.24 * k; }
     g.save(); g.globalAlpha = 0.28; T.elip(g, RX + 6, SUELO + 12, 96 - y * 0.25, 13 - y * 0.03); g.fillStyle = T.TINTA; g.fill(); g.restore();
     // rayas de velocidad
     g.beginPath(); for (const [dy, l] of [[-40, 46], [-78, 30], [-112, 40]]) { g.moveTo(RX - 124 - ((t * 9 + dy) % 30), SUELO - y - bote + dy); g.lineTo(RX - 124 - l - ((t * 9 + dy) % 30), SUELO - y - bote + dy); } T.linea(g, 5, T.PAPEL);
@@ -4079,7 +4079,7 @@
   const ZZ = window.ZZ, T = ZZ.tinta, P = ZZ.personaje;
 
   const TOTAL = 600;
-  const X0 = 74, X1 = 500, SUELO = 716;      // de dónde sale el fantasma, adónde llega y por dónde pisa
+  const X0 = 74, X1 = 456, SUELO = 800;      // de dónde sale el fantasma, adónde llega y por dónde pisa
   const PASO = 1 / 270;                      // lo que avanza cada paso con el dedo puesto
   const GRACIA = 6;                          // pasos que perdona el monstruo al abrir el ojo
   const NIV = [null,
@@ -4186,17 +4186,17 @@
     for (const [x, y0] of [[120, 672], [380, 672], [250, 712], [520, 712], [90, 776], [430, 776]]) { g.moveTo(x, y0); g.lineTo(x, y0 + (y0 === 672 ? 40 : 64)); }
     T.linea(g, 4, C.sueloS);
     // la alfombra
-    T.vol(g, c => T.elip(c, 300, 764, 250, 40), T.ROJO, { sombra: '#C92F47', dx: 0, dy: -8, w: 6 });
-    T.elip(g, 300, 762, 200, 26); T.linea(g, 5, T.AMARILLO);
+    T.vol(g, c => T.elip(c, 280, 790, 270, 40), T.ROJO, { sombra: '#C92F47', dx: 0, dy: -8, w: 6 });
+    T.elip(g, 280, 788, 220, 26); T.linea(g, 5, T.AMARILLO);
     // la mesita y el tarro de galletas
-    T.vol(g, c => T.rr(c, 536, 600, 112, 22, 8), '#E8A968', { sombra: C.suelo, dx: 0, dy: -7, w: 6 });
-    T.tubo(g, c => { c.beginPath(); c.moveTo(560, 622); c.lineTo(552, 716); }, '#E8A968', 10, 5);
-    T.tubo(g, c => { c.beginPath(); c.moveTo(624, 622); c.lineTo(632, 716); }, '#E8A968', 10, 5);
-    const tarro = c => T.rr(c, 550, 504, 86, 98, 26);
-    T.vol(g, tarro, '#BFE6FA', { sombra: '#8FC3DE', dx: -8, dy: 0, w: 7 });
-    for (const [x, y] of [[572, 572], [606, 566], [588, 544], [614, 540]]) { T.circ(g, x, y, 15); T.pinta(g, '#D99A5B', 4); T.circ(g, x - 4, y - 3, 3); T.pinta(g, '#7A4220', 0); T.circ(g, x + 5, y + 4, 3); T.pinta(g, '#7A4220', 0); }
+    T.tubo(g, c => { c.beginPath(); c.moveTo(512, 690); c.lineTo(500, 796); }, '#E8A968', 11, 5);
+    T.tubo(g, c => { c.beginPath(); c.moveTo(600, 690); c.lineTo(612, 796); }, '#E8A968', 11, 5);
+    T.vol(g, c => T.rr(c, 484, 668, 144, 26, 9), '#E8A968', { sombra: C.suelo, dx: 0, dy: -8, w: 6 });
+    const tarro = c => T.rr(c, 498, 546, 116, 124, 32);
+    T.vol(g, tarro, '#BFE6FA', { sombra: '#8FC3DE', dx: -9, dy: 0, w: 7 });
+    for (const [x, y] of [[528, 636], [570, 630], [548, 602], [584, 598], [540, 574]]) { T.circ(g, x, y, 15); T.pinta(g, '#D99A5B', 4); T.circ(g, x - 4, y - 3, 3); T.pinta(g, '#7A4220', 0); T.circ(g, x + 5, y + 4, 3); T.pinta(g, '#7A4220', 0); }
     tarro(g); T.linea(g, 7);
-    T.vol(g, c => T.rr(c, 558, 486, 70, 24, 10), T.ROJO, { dx: 0, dy: -7, w: 6 });
+    T.vol(g, c => T.rr(c, 508, 524, 96, 30, 12), T.ROJO, { dx: 0, dy: -8, w: 6 });
   }
 
   // El monstruo en su sillón. ojo: 0 cerrado, 0,5 entreabierto, 1 abierto.
@@ -4274,14 +4274,15 @@
     T.capa(g, vis, 'terror', fondo);
     monstruo(g, ojo, t, (x - 320) / 220, ojo === 0);
     if (ojo >= 1) {      // lo que ve cuando abre el ojo
-      g.save(); g.globalAlpha = 0.22 + Math.sin(t * 0.6) * 0.04; T.poli(g, [[300, 500], [340, 500], [660, 760], [-20, 760]]); g.fillStyle = '#FFE48A'; g.fill(); g.restore();
+      g.save(); g.globalAlpha = 0.3; T.poli(g, [[296, 520], [344, 520], [680, 850], [-40, 850]]); g.fillStyle = T.AMARILLO; g.fill(); g.restore();
+      g.setLineDash([18, 14]); g.beginPath(); g.moveTo(296, 560); g.lineTo(-10, 850); g.moveTo(344, 560); g.lineTo(650, 850); T.linea(g, 5, T.AMARILLO); g.setLineDash([]);
     } else if (ojo === 0) {  // ronca
       for (let i = 0; i < 3; i++) {
         const k = ((t * 0.012) + i / 3) % 1;
-        T.texto(g, 'Z', 420 + k * 70, 420 - k * 150, 24 + k * 30, { color: T.PAPEL, w: 6, rot: Math.sin(k * 6) * 0.2 });
+        T.texto(g, 'Z', 404 + k * 30, 440 - k * 190, 24 + k * 30, { color: T.PAPEL, w: 6, rot: Math.sin(k * 6) * 0.2 });
       }
     }
-    if (e.fin < 0) T.marca(g, 592, 458 + Math.sin(t * 0.22) * 5, 0, 34);
+    if (e.fin < 0) T.marca(g, 556, 498 + Math.sin(t * 0.22) * 5, 0, 36);
     vis.ch.dibuja(g, 0);
     fantasma(g, x, e, vis);
     vis.ch.dibuja(g, 1);
@@ -4298,7 +4299,7 @@
         T.palabra(vis.ch, '¡TE VIO!', 320, 250, T.ROJO, 62, 1, true);
         son && son.pum();
       } else if (x.t === 'llega') {
-        T.confeti(vis.ch, 560, 480, 30, [T.AMARILLO, T.ROJO, T.MENTA, T.PAPEL], 12, 1);
+        T.confeti(vis.ch, 556, 520, 30, [T.AMARILLO, T.ROJO, T.MENTA, T.PAPEL], 12, 1);
         T.palabra(vis.ch, e.pillados ? '¡GALLETAS!' : '¡NI SE ENTERA!', 320, 250, T.AMARILLO, 56, 1, true);
         son && son.sol();
       }
@@ -4334,7 +4335,7 @@
     { cada: 76, cae: 62, n: 7 },
     { cada: 58, cae: 48, n: 9 },
     { cada: 46, cae: 38, n: 12 }];
-  const C = { muro: '#F6A7D5', muroS: '#E57FBC', acera: '#E9E2D0', aceraS: '#C9BFA6', calle: '#4A3B8F', calleS: '#35296B',
+  const C = { muro: '#F6A7D5', muroS: '#E57FBC', acera: '#AEB9D4', aceraS: '#8C98B8', calle: '#4A3B8F', calleS: '#35296B',
     huevo: '#FFF4DC', huevoS: '#EAD9B0' };
 
   // --- lógica ---------------------------------------------------------------
@@ -4407,8 +4408,13 @@
       T.sombra(g, hueco, 6, 8, 0.3);
       hueco(g); T.pinta(g, '#2B2536', 8);
       g.save(); hueco(g); g.clip(); g.fillStyle = T.trama(g, '#463E62', 13, 2.8); g.fillRect(x - 62, 96, 124, 150); g.restore();
+      const vec = { 130: ['#FF9F1C', 'euforico'], 320: ['#8BD63A', 'enfadado'], 510: ['#57C7F2', 'contento'] }[x];
+      g.save(); hueco(g); g.clip();
+      T.vol(g, c => T.elip(c, x, 236, 52, 66), vec[0], { sombra: T.oscuro(vec[0], 0.25), dx: -7, dy: -7, w: 6 });
+      g.translate(x, 206); g.scale(0.62, 0.62); P.cara(g, vec[1], x, { ex: 22, ey: -8, by: 20, piel: vec[0], mira: { x: 0, y: 0.9 } });
+      g.restore();
       hueco(g); T.linea(g, 8);
-      for (const sg of [-1, 1]) T.vol(g, c => T.rr(c, x + sg * 84 - 22, 92, 44, 158, 8), T.MENTA, { sombra: T.oscuro(T.MENTA, 0.25), dx: -6, dy: 0, w: 6 });
+      for (const sg of [-1, 1]) T.vol(g, c => T.rr(c, x + sg * 78 - 14, 92, 28, 158, 8), T.MENTA, { sombra: T.oscuro(T.MENTA, 0.25), dx: -5, dy: 0, w: 6 });
       T.vol(g, c => T.rr(c, x - 78, 240, 156, 26, 8), T.PAPEL, { sombra: '#D9CDB3', dx: 0, dy: -8, w: 6 });
     }
     // toldo de la tienda
@@ -4429,8 +4435,8 @@
   function cosa(g, tipo, t) {
     if (tipo === 0) {            // yunque
       const cam = c => { c.beginPath(); c.moveTo(-66, -40); c.lineTo(66, -40); c.lineTo(40, -8); c.lineTo(30, -8); c.lineTo(30, 16); c.lineTo(58, 44); c.lineTo(-58, 44); c.lineTo(-30, 16); c.lineTo(-30, -8); c.lineTo(-90, -18); c.closePath(); };
-      T.vol(g, cam, '#6B7896', { sombra: '#3A4460', dx: -9, dy: -7, w: 7 });
-      g.save(); g.translate(0, -14); g.scale(0.62, 0.62); P.cara(g, 'enfadado', t, { ex: 22, ey: -10, by: 18, piel: '#6B7896' }); g.restore();
+      T.vol(g, cam, '#4A5470', { sombra: '#2A3148', dx: -9, dy: -7, w: 7 });
+      g.save(); g.translate(0, -14); g.scale(0.62, 0.62); P.cara(g, 'enfadado', t, { ex: 22, ey: -10, by: 18, piel: '#4A5470' }); g.restore();
     } else if (tipo === 1) {     // piano
       T.vol(g, c => T.rr(c, -66, -54, 132, 104, 12), '#8A4FD0', { sombra: '#5E2FA0', dx: -9, dy: -7, w: 7 });
       T.rr(g, -54, 10, 108, 30, 6); T.pinta(g, '#FFFFFF', 5);
@@ -4454,6 +4460,15 @@
     const plaf = n < e.aturdido, kp = plaf ? 1 - (e.aturdido - n) / 16 : 1;
     const enPeligro = o && o.estado === 0 && o.peligro.indexOf(e.carril) >= 0;
     g.save(); g.globalAlpha = 0.26; T.elip(g, x + 4, SUELO + 8, 58 - salto * 0.3, 13); g.fillStyle = T.TINTA; g.fill(); g.restore();
+    if (plaf) {
+      g.save(); g.translate(x, SUELO + 4);
+      const clara = c => { c.beginPath(); c.moveTo(-92, 0); c.bezierCurveTo(-96, -30, -50, -20, -34, -36); c.bezierCurveTo(-6, -52, 30, -30, 54, -34); c.bezierCurveTo(100, -34, 104, 4, 78, 14); c.bezierCurveTo(40, 30, -60, 28, -92, 0); c.closePath(); };
+      T.vol(g, clara, '#FFFFFF', { sombra: '#D9E1EA', dx: 0, dy: -7, w: 7 });
+      T.vol(g, c => T.elip(c, 0, -10, 40, 24), T.AMARILLO, { sombra: '#E0A51A', dx: -5, dy: -5, w: 6 });
+      g.translate(0, -12); g.scale(0.5, 0.36); P.cara(g, 'triste', t, { ex: 22, ey: -8, by: 22, piel: T.AMARILLO });
+      g.restore();
+      return;
+    }
     g.save(); g.translate(x, SUELO - salto + (enPeligro ? Math.sin(t * 1.2) * 2 : 0));
     g.rotate(k < 1 ? (e.carril > e.de ? 1 : -1) * Math.sin(k * Math.PI) * 0.22 : 0);
     g.scale(plaf ? 1 + 0.3 * (1 - kp) : 1, plaf ? 0.6 + 0.4 * kp : 1 + (k < 1 ? Math.sin(k * Math.PI) * 0.08 : Math.sin(t * 0.1) * 0.015));
@@ -4470,7 +4485,7 @@
     P.cara(g, plaf ? 'triste' : enPeligro ? 'susto' : o && o.estado === 0 ? 'contento' : 'neutro', t, { ex: 22, ey: -8, by: 20, piel: C.huevo });
     g.restore();
     // antes del primer salto: a qué lados se toca
-    if (e.cambio < 0) for (const sg of [-1, 1]) T.marca(g, x + sg * (104 + Math.sin(t * 0.22) * 6), SUELO - 70, -sg * Math.PI / 2, 34);
+    if (e.cambio < 0 && e.io < 2) for (const sg of [-1, 1]) T.marca(g, x + sg * (104 + Math.sin(t * 0.22) * 6), SUELO - 70, -sg * Math.PI / 2, 34);
   }
 
   function dibuja(g, e, vis) {
@@ -4627,16 +4642,24 @@
 
   // La valla va por delante de las ovejas que pasan por detrás y por detrás de las de delante: en medio.
   function valla(g) {
+    g.translate(320, PRADO + 22); g.scale(1.42, 1.42); g.translate(-320, -PRADO - 22);
     for (const x of [262, 320, 378]) T.vol(g, c => T.poli(c, [[x - 16, PRADO + 22], [x - 16, PRADO - 74], [x, PRADO - 94], [x + 16, PRADO - 74], [x + 16, PRADO + 22]]), T.PAPEL, { sombra: '#D9CDB3', dx: -5, dy: 0, w: 6 });
     for (const y of [PRADO - 54, PRADO - 14]) T.vol(g, c => T.rr(c, 236, y, 168, 16, 6), T.PAPEL, { sombra: '#D9CDB3', dx: 0, dy: -5, w: 6 });
   }
 
   // La cama, en primer plano: quien cuenta es Ajuste.
+  function cabecero(g) {
+    T.vol(g, c => T.rr(c, 10, 548, 300, 260, 60), '#C97B45', { sombra: '#8E4F2A', dx: -12, dy: 0, w: 8 });
+    T.rr(g, 44, 584, 232, 150, 40); T.linea(g, 6, '#8E4F2A');
+    T.vol(g, c => T.rr(c, 30, 690, 250, 90, 40), '#FFFFFF', { sombra: '#D9E1EA', dx: -8, dy: -8, w: 7 });
+  }
   function cama(g) {
-    T.vol(g, c => T.rr(c, -20, 736, 680, 130, 0), C.colcha, { sombra: C.colchaS, dx: 0, dy: 22, w: 7 });
-    g.fillStyle = T.trama(g, C.colchaS, 14, 2.8); g.fillRect(0, 790, ZZ.PW, 50);
-    g.fillStyle = T.AMARILLO; for (const [x, y, r] of [[330, 792, 9], [450, 812, 7], [570, 786, 9], [250, 818, 6]]) { T.estrella(g, x, y, r * 2, r * 0.8, 5); g.fill(); }
-    T.vol(g, c => T.rr(c, -20, 716, 680, 30, 12), T.PAPEL, { sombra: '#D9CDB3', dx: 0, dy: -8, w: 7 });
+    const colcha = c => { c.beginPath(); c.moveTo(-20, 790); c.quadraticCurveTo(160, 742, 330, 772); c.quadraticCurveTo(500, 800, 660, 760); c.lineTo(660, 870); c.lineTo(-20, 870); c.closePath(); };
+    T.vol(g, colcha, C.colcha, { sombra: C.colchaS, dx: 0, dy: 20, w: 7 });
+    g.save(); colcha(g); g.clip(); g.fillStyle = T.trama(g, C.colchaS, 14, 2.8); g.fillRect(0, 810, ZZ.PW, 40);
+    g.fillStyle = T.AMARILLO; for (const [x, y, r] of [[360, 812, 9], [470, 822, 7], [580, 800, 9], [250, 818, 7], [90, 812, 8]]) { T.estrella(g, x, y, r * 2, r * 0.8, 5); g.fill(); }
+    g.restore();
+    T.vol(g, c => { c.beginPath(); c.moveTo(-20, 772); c.quadraticCurveTo(160, 724, 330, 754); c.quadraticCurveTo(500, 782, 660, 742); c.lineTo(660, 768); c.quadraticCurveTo(500, 808, 330, 780); c.quadraticCurveTo(160, 750, -20, 798); c.closePath(); }, T.PAPEL, { sombra: '#D9CDB3', dx: 0, dy: -6, w: 6 });
   }
 
   function oveja(g, lobo, t, u) {
@@ -4687,8 +4710,8 @@
         if ((b.fila === 2) !== fila) continue;
         const u = (n - b.s) / CRUZA;
         if (u < 0 || u > 1) continue;
-        const sc = [0.82, 0.92, 1.04][b.fila];
-        g.save(); g.translate(-90 + u * 820, PRADO - 30 + (b.fila - 1) * 16 - Math.sin(u * Math.PI) * (150 + b.fila * 10));
+        const sc = [1.12, 1.28, 1.46][b.fila];
+        g.save(); g.translate(-130 + u * 900, PRADO - 50 + (b.fila - 1) * 18 - Math.sin(u * Math.PI) * (176 + b.fila * 12));
         g.rotate((u - 0.5) * 0.7); g.scale(sc, sc);
         oveja(g, b.lobo, t + b.s, u);
         g.restore();
@@ -4700,19 +4723,18 @@
     vis.ch.dibuja(g, 0);
     // Ajuste, en la cama, con su gorro de dormir
     const expr = !hecho ? (pregunta ? 'tension' : 'neutro') : e.elegido >= 0 && e.ops[e.elegido] === e.ovejas ? 'contento' : 'susto';
-    P.busto(g, 126, 690, 1.0, P.AJUSTE, expr, t, pregunta ? {} : { mira: { x: 0.6, y: -0.8 } });
-    g.save(); g.translate(126, 630 + Math.sin(t * 0.09) * 1.5); g.rotate(-0.2);
+    T.capa(g, vis, 'nochesCabecero', cabecero);
+    P.busto(g, 156, 664, 1.22, P.AJUSTE, expr, t, pregunta ? {} : { mira: { x: 0.6, y: -0.8 } });
+    g.save(); g.translate(156, 590 + Math.sin(t * 0.09) * 1.5); g.rotate(-0.2); g.scale(1.22, 1.22);
     T.vol(g, c => { c.beginPath(); c.moveTo(-58, 6); c.quadraticCurveTo(-30, -70, 40, -92); c.quadraticCurveTo(60, -40, 58, 6); c.closePath(); }, T.AZUL, { sombra: '#1F4FD0', dx: -8, dy: 0, w: 6 });
     T.vol(g, c => T.rr(c, -64, -2, 128, 20, 10), T.PAPEL, { sombra: '#D9CDB3', dx: 0, dy: -5, w: 6 });
     T.circ(g, 46, -94, 14); T.pinta(g, T.PAPEL, 5);
     g.restore();
     T.capa(g, vis, 'nochesCama', cama);
     // las bolitas de lo que está pensando
-    if (!pregunta) for (const [x, y, r] of [[210, 626, 10], [236, 594, 14]]) { T.circ(g, x, y + Math.sin(t * 0.1 + x) * 3, r); T.pinta(g, '#FFFFFF', 5); }
     if (pregunta) for (let i = 0; i < 3; i++) {
       const bueno = e.ops[i] === e.ovejas;
       burbuja(g, OPX[i], OPY, e.ops[i], !hecho ? 0 : bueno ? 1 : i === e.elegido ? 2 : 0, t, i);
-      if (!hecho) T.marca(g, OPX[i], OPY - 96 + Math.sin(t * 0.22 + i) * 5, 0, 28);
     }
     vis.ch.dibuja(g, 1);
   }
@@ -4736,7 +4758,7 @@
 
   ZZ.canales.noches = {
     id: 'noches', num: 14, nombre: 'BUENAS NOCHES', orden: '¿CUÁNTAS?', hechoTxt: '¡ZZZ!',
-    pista: 'Cuenta las ovejas y toca el número',
+    pista: 'Cuenta las ovejas (los lobos no) y toca el número',
     rotulo: 'ANTES DE DORMIR: «CONTANDO OVEJAS»',
     color: C.cielo, color2: C.prado, color3: T.AMARILLO,
     pasos: TOTAL,      // diez segundos
