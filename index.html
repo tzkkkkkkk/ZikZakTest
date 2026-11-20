@@ -2455,7 +2455,17 @@
   // Un solo canal para todos. Cada móvil repite su estado entero por él; quien calla unos segundos, se da por ido.
   function salaSupabase(cfg) {
     const yo = 'p' + Math.random().toString(36).slice(2, 12);
-    const tema = 'realtime:zikzak-sala';
+    // Sala privada: su nombre va en el enlace (#sala-xxxx). Solo se ven quienes abren ese mismo enlace.
+    let cod = (/^#sala-([a-z0-9]{8,24})$/.exec(location.hash) || [])[1];
+    try { if (!cod) cod = localStorage.getItem('zz-sala'); } catch (e) { /* nada */ }
+    if (!cod || !/^[a-z0-9]{8,24}$/.test(cod)) {
+      const v = new Uint8Array(12); crypto.getRandomValues(v);
+      cod = Array.from(v, x => 'abcdefghjkmnpqrstuvwxyz23456789'[x % 31]).join('');
+    }
+    try { localStorage.setItem('zz-sala', cod); } catch (e) { /* nada */ }
+    try { history.replaceState(null, '', '#sala-' + cod); } catch (e) { location.hash = 'sala-' + cod; }
+    R.codigoSala = cod;
+    const tema = 'realtime:zz-' + cod;
     const otros = new Map();
     let mio = {}, ws = null, ref = 0, unido = false, pendiente = false, ultimoEnvio = 0;
     const manda = (topic, event, payload) => { try { ws.send(JSON.stringify({ topic, event, payload, ref: String(++ref) })); } catch (e) { /* nada */ } };
