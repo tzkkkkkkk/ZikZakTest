@@ -45,7 +45,7 @@
   'use strict';
   const ZZ = window.ZZ = window.ZZ || {};
 
-  ZZ.VERSION = '1.3.1';
+  ZZ.VERSION = '1.4';
   ZZ.HZ = 60;          // pasos de lógica por segundo
   ZZ.PASOS = 300;      // cinco segundos: lo que dura un canal si no dice otra cosa
   ZZ.PW = 640;         // tamaño lógico de la pantalla de la tele
@@ -145,6 +145,51 @@
   };
 })();
 //# sourceURL=zz/nucleo.js
+</script>
+<script>
+/* ZikZak · idioma
+   Los textos están escritos en castellano dentro del código. Al dibujarse pasan por ZZ.tr, que busca
+   su traducción en el fichero del idioma elegido (src/idiomas/xx.js): primero el texto exacto y, si no,
+   una lista de patrones para los que llevan números o nombres. Lo que no encuentra se queda en castellano.
+   Para añadir un idioma basta otro fichero como src/idiomas/en.js (y apuntarlo en tools/build_page.py). */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ;
+  ZZ.idiomas = ZZ.idiomas || {};
+  ZZ.idioma = 'es';
+  let dic = null, pat = [], visto = new Map();
+
+  ZZ.ponIdioma = function (cod) {
+    ZZ.idioma = cod !== 'es' && ZZ.idiomas[cod] ? cod : 'es';
+    dic = ZZ.idioma === 'es' ? null : ZZ.idiomas[ZZ.idioma];
+    pat = [];
+    for (const p of (dic && dic.patrones) || []) { try { pat.push([new RegExp(p[0]), p[1]]); } catch (e) { /* patrón mal escrito: se salta */ } }
+    visto = new Map();
+  };
+
+  ZZ.tr = function (s) {
+    if (!dic || typeof s !== 'string' || s.length < 2) return s;
+    let r = visto.get(s);
+    if (r !== undefined) return r;
+    r = Object.prototype.hasOwnProperty.call(dic.exactos || {}, s) ? dic.exactos[s] : undefined;
+    if (r === undefined) { r = s; for (const p of pat) if (p[0].test(s)) { r = s.replace(p[0], p[1]); break; } }
+    if (visto.size > 3000) visto.clear();
+    visto.set(s, r);
+    return r;
+  };
+
+  // Para la consola: repasa un diccionario. Ninguna traducción puede ser más larga que su original
+  // (así cabe donde cabía el castellano) y los patrones tienen que estar bien escritos.
+  ZZ.revisaIdioma = function (cod) {
+    const d = ZZ.idiomas[cod];
+    if (!d) return { ok: false, falta: cod };
+    const ex = d.exactos || {}, largas = [], rotos = [];
+    for (const k of Object.keys(ex)) if (ex[k].length > k.length) largas.push(k + ' → ' + ex[k]);
+    for (const p of d.patrones || []) { try { new RegExp(p[0]); } catch (e) { rotos.push(String(p[0])); } }
+    return { ok: !largas.length && !rotos.length, textos: Object.keys(ex).length, patrones: (d.patrones || []).length, largas, rotos };
+  };
+})();
+//# sourceURL=zz/idioma.js
 </script>
 <script>
 /* ZikZak · tinta
@@ -274,6 +319,7 @@
 
   // --- texto ----------------------------------------------------------------
   T.texto = function (g, s, x, y, tam, o) {
+    s = ZZ.tr(s);
     o = o || {};
     g.save();
     g.font = (o.peso ? o.peso + ' ' : '') + tam + 'px ' + (o.fuente || T.F_GORDA);
@@ -296,6 +342,7 @@
     g.restore();
   };
   T.ancho = function (g, s, tam, fuente, peso) {
+    s = ZZ.tr(s);
     g.save();
     g.font = (peso ? peso + ' ' : '') + tam + 'px ' + (fuente || T.F_GORDA);
     const w = g.measureText(s).width;
@@ -892,7 +939,41 @@
     }, c, { dx: -5, dy: -6, w: 6 });
   }
 
+  // La ropa que se compra con zkcoins: gorros que valen para cualquier pinta.
+  P.ROPA = [
+    { id: 'corona', nombre: 'CORONA', precio: 300 },
+    { id: 'chistera', nombre: 'CHISTERA', precio: 1200 },
+    { id: 'vikingo', nombre: 'CASCO VIKINGO', precio: 3500, esc: 0.82 },      // esc: tamaño en el escaparate
+    { id: 'aureola', nombre: 'AUREOLA', precio: 9000 },
+  ];
+  const EXTRA = {
+    corona(g) {
+      T.vol(g, x => T.poli(x, [[-48, -46], [-52, -96], [-28, -74], [-13, -106], [0, -76], [13, -106], [28, -74], [52, -96], [48, -46]]), T.AMARILLO, { sombra: '#E0A51A', dx: -5, dy: 0, w: 6 });
+      for (const [x, y, col] of [[-26, -58, T.ROJO], [0, -60, T.AZUL], [26, -58, T.MENTA]]) { T.circ(g, x, y, 7); T.pinta(g, col, 4); }
+    },
+    chistera(g) {
+      T.vol(g, x => T.rr(x, -42, -128, 84, 84, 8), '#2B2536', { sombra: T.TINTA, dx: -10, dy: 0, w: 6 });
+      g.fillStyle = T.ROJO; g.fillRect(-42, -66, 84, 14); g.beginPath(); g.moveTo(-42, -66); g.lineTo(42, -66); g.moveTo(-42, -52); g.lineTo(42, -52); T.linea(g, 4);
+      T.vol(g, x => T.elip(x, 0, -46, 72, 13), '#2B2536', { sombra: T.TINTA, dx: 0, dy: -5, w: 6 });
+    },
+    vikingo(g) {
+      for (const s of [-1, 1]) T.vol(g, x => { x.beginPath(); x.moveTo(s * 44, -56); x.quadraticCurveTo(s * 92, -66, s * 84, -118); x.quadraticCurveTo(s * 64, -86, s * 36, -80); x.closePath(); }, T.PAPEL, { sombra: '#D9CDB3', dx: 0, dy: -5, w: 6 });
+      T.vol(g, x => { x.beginPath(); x.moveTo(-58, -40); x.quadraticCurveTo(-58, -104, 0, -104); x.quadraticCurveTo(58, -104, 58, -40); x.closePath(); }, '#B9C6D2', { sombra: '#7F8FA6', dx: -8, dy: 0, w: 6 });
+      T.vol(g, x => T.rr(x, -62, -52, 124, 18, 8), T.AMARILLO, { sombra: '#E0A51A', dx: 0, dy: -5, w: 6 });
+      for (const x of [-34, 0, 34]) { T.circ(g, x, -43, 4.5); T.pinta(g, T.TINTA, 0); }
+    },
+    aureola(g) {
+      T.elip(g, 0, -96, 50, 14); T.linea(g, 19);
+      T.elip(g, 0, -96, 50, 14); T.linea(g, 9, '#FFE48A');
+      T.estrella(g, 58, -118, 12, 5, 4); T.pinta(g, '#FFFFFF', 3);
+    },
+  };
+  // La pinta con el gorro comprado puesto encima del suyo.
+  P.conRopa = (a, id) => (id && EXTRA[id] && !a.tele ? Object.assign({}, a, { gorro: id }) : a);
+  P.gorroSuelto = (g, id) => { if (EXTRA[id]) EXTRA[id](g); };
+
   function gorro(g, a) {
+    if (EXTRA[a.gorro]) { EXTRA[a.gorro](g); return; }
     const c = a.cGorro, s = T.oscuro(c, 0.24);
     switch (a.gorro) {
       case 'gorra': {
@@ -952,7 +1033,7 @@
       g.fillStyle = T.oscuro('#F7E6C4', 0.3); T.circ(g, -2.5, 0, 1.4); g.fill(); T.circ(g, 2.5, 0, 1.4); g.fill();
       g.restore();
     }
-    const tapado = a.gorro && a.gorro !== 'cinta';
+    const tapado = a.gorro && a.gorro !== 'cinta' && a.gorro !== 'aureola' && a.gorro !== 'corona';
     cara(g, expr, t, { ex: a.ojos === 'gafas' ? 22 : 20, ey: a.forma === 'alargada' ? -8 : -4, by: a.forma === 'alargada' ? 33 : 30, piel, mira, ojos: a.ojos, nariz: a.nariz, bigote: a.bigote, pecas: a.pecas });
     peloDelante(g, a, tapado, f);
     if (a.flequillo) {
@@ -4769,6 +4850,338 @@
 //# sourceURL=zz/canales/noches.js
 </script>
 <script>
+/* ZikZak · inglés
+   El diccionario del idioma: la clave es el texto en castellano tal como está en el código.
+     exactos   texto entero → traducción
+     patrones  [expresión, sustitución] para los textos que llevan números o nombres; la sustitución
+               es un texto con $1, $2… o una función (la de String.replace)
+   Normas: ninguna traducción es más larga que su original (se comprueba con ZZ.revisaIdioma('en')),
+   sin género para quien juega y sin traducir nombres propios (Ajuste, los nombres de la sala). */
+(function () {
+  'use strict';
+  const ZZ = window.ZZ;
+  const tr = s => ZZ.tr(s);
+
+  ZZ.idiomas.en = {
+    exactos: {
+      // --- título y placas ---------------------------------------------------------------
+      'TÚ': 'ME',
+      'VESTUARIO': 'WARDROBE',
+      'GRATIS': 'FREE',
+      'Hoy ya no quedan duelos con apuesta': 'No bet duels left for today',
+      'No te llega para esa mesa': 'Not enough for that table',
+      '¡A ZAPEAR!': "LET'S ZAP!",
+      '¡TE RETAN!': 'CHALLENGE!',
+      'CON UN AMIGO': 'VS A FRIEND',
+      'CANALES': 'GUIDE',
+      'CONTRA TI': 'VS MYSELF',
+      '+100 zkcoins de hoy': '+100 zkcoins today',
+      'SONIDO': 'SOUND',
+      'SÍ': 'ON',
+      'ZikZak: duelos de minijuegos. Se juega tocando la pantalla.': 'ZikZak: minigame duels. Played by tapping the screen.',
+
+      // --- vestuario -----------------------------------------------------------------------
+      'CORONA': 'CROWN',
+      'CHISTERA': 'TOP HAT',
+      'CASCO VIKINGO': 'VIKING HELMET',
+      'AUREOLA': 'HALO',
+      'QUITAR': 'REMOVE',
+      'PONER': 'WEAR',
+      'VOLVER': 'BACK',
+
+      // --- canales (la lista) y ensayo --------------------------------------------------------
+      'Ensaya un nivel o juégate el canal fijo.': 'Practice a level or duel on one channel.',
+      'SIN MARCA TODAVÍA': 'NO SCORE YET',
+      'CANAL FIJO': 'DUEL HERE',
+      'DESLIZA': 'SCROLL',
+      'ENSAYO': 'WARMUP',
+      'Sin rival y sin apuesta': 'No rival, no bet',
+      'TU PUNTUACIÓN': 'YOUR SCORE',
+      '¡RÉCORD!': 'RECORD!',
+      'OTRA VEZ': 'AGAIN',
+
+      // --- búsqueda de rival y cara a cara ------------------------------------------------------
+      'MESA DE PRUEBA': 'TEST TABLE',
+      'Sin apuesta. Buscando a alguien en directo…': 'No bet. Looking for someone live…',
+      'NADIE EN DIRECTO': 'NO ONE LIVE',
+      'Juegas contra Ajuste, el rival de la casa': 'You play Ajuste, the house rival',
+      'TÚ, ANTES': 'PAST ME',
+      'EN DIFERIDO': 'RECORDED',
+      'EN DIRECTO': 'LIVE',
+      'RIVAL DE LA CASA': 'HOUSE RIVAL',
+      'Lo mueve un programa:': 'Run by a program:',
+      'no es una persona': 'not a person',
+      'Tu duelo anterior, grabado': 'Your last duel, recorded',
+      'Juega ahora mismo:': 'Playing right now:',
+      'desde su móvil': 'on their phone',
+      'Su reto:': 'By code:',
+      'grabado en su móvil': 'from their phone',
+      'Su turno:': 'Turn 1:',
+      'grabado hace un momento': 'recorded a moment ago',
+      'ALGUIEN': 'SOMEONE',
+      'JUGADOR 1': 'PLAYER 1',
+      'JUGADOR 2': 'PLAYER 2',
+      'ESPERANDO…': 'WAITING…',
+      'TOCA PARA EMPEZAR': 'TAP TO START',
+
+      // --- fin del canal y marcador ----------------------------------------------------------------
+      '¡PUM!': 'BANG!',
+      '¡TIEMPO!': 'TIME UP!',
+      '¡HECHO!': 'DONE!',
+      'Queda grabado para tu rival': 'Recorded for your rival',
+      'Después le toca a JUGADOR 2': 'PLAYER 2 goes next',
+      '¡CANAL TUYO!': 'CHANNEL WON!',
+      'SE LO LLEVA': 'RIVAL WINS',
+      'EMPATE': 'DRAW',
+      'ESPERANDO A': 'WAITING FOR',
+      '¿LISTOS? FALTA': 'NOT READY YET:',
+
+      // --- con un amigo -----------------------------------------------------------------------------
+      'EN ESTE MÓVIL': 'ON THIS PHONE',
+      'Por turnos: os pasáis el móvil.': 'Take turns: pass the phone.',
+      '¡A JUGAR!': 'PLAY!',
+      'A DISTANCIA': 'FROM AFAR',
+      'Juegas, mandas un código por mensaje y tu rival juega contra tu partida cuando quiera.': 'You play, text a code, and your rival plays against your game whenever they like.',
+      'CREAR RETO': 'CHALLENGE',
+      'TENGO UN CÓDIGO': 'I HAVE A CODE',
+      'Aquí no se abre la sala: hace falta entrar con una cuenta de Claude que tenga acceso.': 'No lobby here: sign in with a Claude account that has access.',
+      'Los dos a la vez, cada uno en su móvil. Pásale el enlace de esta página.': "Both at once, each on your own phone. Send them this page's link.",
+      'Los dos a la vez, cada uno en su móvil y con su cuenta de Claude.': 'Both at once, each on your own phone and Claude account.',
+      'A LA SALA': 'TO LOBBY',
+
+      // --- a distancia: el código ---------------------------------------------------------------------
+      'RETO LISTO': 'CODE READY',
+      'Copia este código y mándaselo por mensaje. Quien lo pegue en su ZikZak jugará contra esta partida tuya.': 'Copy this code and text it over. Whoever pastes it into their ZikZak plays this game of yours.',
+      '¡COPIADO!': 'COPIED!',
+      'COPIAR CÓDIGO': 'COPY CODE',
+      'No se ha podido copiar solo. Mantén pulsado el código y elige «Copiar».': "Couldn't copy it. Press and hold the code and pick “Copy”.",
+      'Pégalo en un mensaje. En su ZikZak: «Con un amigo» y «Tengo un código».': 'Paste it in a message. In their ZikZak: “VS a friend”, “I have a code”.',
+      'MENÚ': 'MENU',
+      'Mantén pulsado aquí y pega el código': 'Hold here and paste the code',
+      'Código del reto': 'Challenge code',
+      'Pega en el recuadro el código que te han mandado.': 'Paste the code you were sent into the box.',
+      '¡ACEPTO!': "I'M IN!",
+      'Ese código no vale. Cópialo entero, desde «ZZ1-» hasta el final.': "That code doesn't work. Copy all of it, from “ZZ1-” to the end.",
+
+      // --- por turnos ------------------------------------------------------------------------------------
+      'PASA EL MÓVIL': 'HAND IT OVER',
+      'POR TURNOS': 'TAKE TURNS',
+      'Te toca contra la grabación de JUGADOR 1': "You're up against PLAYER 1's recording",
+      'OTRA PINTA': 'NEW LOOK',
+      '¡EMPEZAR!': 'START!',
+      'TU RETO': 'MY RUN',
+      'SE ESTÁ GRABANDO TU PARTIDA': 'RECORDING THIS GAME',
+      'JUGADOR 2 ESPERA SU TURNO': 'PLAYER 2 IS UP NEXT',
+
+      // --- la sala ------------------------------------------------------------------------------------------
+      'LA SALA': 'LOBBY',
+      'Aquí no se puede abrir la sala. Hace falta entrar con una cuenta de Claude que tenga acceso a la página.': "The lobby can't open here. You need to sign in with a Claude account that has access to this page.",
+      'El servidor del directo no contesta. Mientras tanto podéis retaros con un código: «Con un amigo», «A distancia».': "The live server isn't answering. Meanwhile you can duel by code: “VS a friend”, “From afar”.",
+      'Aquí sale quien ha abierto el enlace de tu sala': 'Whoever opens your lobby link shows up here',
+      'Aquí sale quien tiene la página abierta ahora mismo': 'Whoever has the page open right now shows up here',
+      'NADIE MÁS POR AQUÍ': 'NO ONE ELSE HERE',
+      'Copiado. Pégalo en un mensaje: solo entra en tu sala quien abra ese enlace.': 'Copied. Paste it in a message: only that link gets into your lobby.',
+      'No se ha podido copiar solo. Usa «Compartir» del navegador: la dirección ya lleva tu sala.': "Couldn't copy it. Use your browser's “Share”: the address already has your lobby.",
+      'Esta sala es solo tuya. Mándale su enlace a tu amigo o amiga y dile que entre en «Con un amigo» y «A la sala».': 'This lobby is yours alone. Send your friend its link and tell them to go to “VS a friend” and “To lobby”.',
+      'Comparte la página con tu amigo o amiga desde el menú Compartir y dile que entre en «Con un amigo».': 'Share the page with your friend from the Share menu and tell them to go to “VS a friend”.',
+      'COPIAR ENLACE': 'COPY LINK',
+      '¡Te reta!': 'Duel me!',
+      'Esperando su respuesta…': 'Awaiting their reply…',
+      'Está en un duelo': 'In a duel',
+      'En el menú': 'In menu',
+      'En la sala': 'In lobby',
+      'ACEPTAR': 'ACCEPT',
+      'CANCELAR': 'CANCEL',
+      'RETAR': 'DUEL',
+      'OTRO NOMBRE': 'NEW NAME',
+
+      // --- resultado del duelo ------------------------------------------------------------------------------
+      '¡GANA EL 2!': 'P2 WINS!',
+      '¡GANA EL 1!': 'P1 WINS!',
+      '¡GANAS!': 'VICTORY',
+      'PIERDES': 'DEFEAT',
+      'Tu rival se ha ido: el duelo es tuyo': 'Your rival left: the duel is yours',
+      'OTRA PARTIDA': 'PLAY AGAIN',
+      'CREAR MI RETO': 'MY CHALLENGE',
+      'OTRO DUELO': 'NEW DUEL',
+
+      // --- los canales: nombre, orden, pista, rótulo y remate ---------------------------------------------------
+      'COCINA': 'FOOD',
+      '¡CORTA!': 'SLICE!',
+      'Toca cuando la marca llegue al cuchillo': 'Tap when the mark reaches the knife',
+      'HOY: CHORIZO EN CINCO SEGUNDOS': 'TODAY: CHORIZO IN FIVE SECONDS',
+
+      'EL TIEMPO': 'WEATHER',
+      '¡DESPEJA!': 'CLEAR!',
+      'Arrastra las nubes fuera de la pantalla': 'Drag the clouds off the screen',
+      'MAÑANA: SOL, SI TE DAS PRISA': 'TOMORROW: SUN, IF YOU HURRY',
+      '¡SOLAZO!': 'SUNNY!',
+
+      '¡DISPARA!': 'SHOOT!',
+      'Toca cada lata antes de que caiga': 'Tap each can before it falls',
+      'SESIÓN DE TARDE: «POR UN PUÑADO DE LATAS»': 'MATINEE: “A FISTFUL OF CANS”',
+
+      'CONCURSO': 'QUIZ',
+      '¡PULSA!': 'PRESS!',
+      'Toca cuando la lámpara se ponga verde': 'Tap when the lamp turns green',
+      'EN DIRECTO: «EL DEDO MÁS RÁPIDO»': 'LIVE: “THE QUICKEST FINGER”',
+
+      'TELETIENDA': 'SHOPPING',
+      '¡LLENA!': 'POUR!',
+      'Mantén el dedo y suelta en la raya': 'Hold, then let go at the line',
+      'OFERTA RELÁMPAGO: EL VASO JUSTO': 'FLASH SALE: THE PERFECT POUR',
+
+      'BRICOLAJE': 'DIY',
+      '¡CLAVA!': 'HAMMER!',
+      'Toca cuando el rojo llegue a la marca amarilla': 'Tap when the red reaches the yellow mark',
+      'TALLER EN DIRECTO: «GOLPE SECO»': 'WORKSHOP LIVE: “ONE CLEAN HIT”',
+
+      'DOCUMENTAL': 'NATURE',
+      '¡ATRAPA!': 'CATCH!',
+      'Toca cuando la mosca pase frente a la rana': 'Tap when the fly passes the frog',
+      'NATURALEZA EN DIRECTO: «LA LENGUA»': 'NATURE LIVE: “THE TONGUE”',
+
+      'MUSICAL': 'MUSIC',
+      '¡AL RITMO!': 'ON BEAT!',
+      'Toca cada nota en el aro. Las tachadas, no': 'Tap notes in the ring. Not the angry ones',
+      'RADIO RELÁMPAGO: «EL BOM PERFECTO»': 'FLASH RADIO: “THE PERFECT BOOM”',
+
+      'NOTICIAS': 'NEWS',
+      '¡ENDEREZA!': 'LEVEL IT!',
+      'Arrastra a los lados y suelta cuando esté recto': "Drag sideways, let go when it's straight",
+      'ÚLTIMA HORA: EL CUADRO SIGUE TORCIDO': 'BREAKING: PICTURE STILL CROOKED',
+      'ÚLTIMA HORA: EL CUADRO SIGUE TORCIDO   ·   EL TIEMPO: NUBES CON MALA CARA   ·   DEPORTES: UN SEÑOR CON BIGOTE SALTA VALLAS   ·   SUCESOS: DESAPARECE UNA BOLITA EN PLENA FUNCIÓN   ·   ':
+        'BREAKING: PICTURE STILL CROOKED   ·   WEATHER: GRUMPY-LOOKING CLOUDS   ·   SPORTS: MAN WITH MOUSTACHE JUMPS HURDLES   ·   CRIME: BALL VANISHES IN MID-SHOW   ·   ',
+      '¡COLGADO!': 'HUNG!',
+
+      'MAGIA': 'MAGIC',
+      '¿DÓNDE ESTÁ?': 'WHERE IS IT?',
+      'Sigue la bolita y toca su cubilete al final': 'Follow the ball and tap its cup at the end',
+      'ESTA NOCHE: «EL GRAN AJUSTE»': 'TONIGHT: “THE GREAT AJUSTE”',
+      '¡TACHÁN!': 'TA-DA!',
+
+      'DEPORTES': 'SPORTS',
+      '¡SALTA!': 'JUMP!',
+      'Toca para saltar cada valla. Con balón, no saltes': "Tap to jump each hurdle. Ball coming? Don't jump",
+      'EN DIRECTO: LOS 15 SEGUNDOS VALLAS': 'LIVE: THE 15-SECOND HURDLES',
+      '¡META!': 'FINISH',
+
+      'TERROR': 'HORROR',
+      '¡QUIETO!': 'FREEZE!',
+      'Mantén para andar. Suelta si abre el ojo': 'Hold to walk. Let go if the eye opens',
+      'SESIÓN GOLFA: «EL TARRO DE GALLETAS»': 'LATE SHOW: “THE COOKIE JAR”',
+      '¡ÑAM!': 'YUM!',
+
+      'DIBUJOS': 'TOONS',
+      '¡ESQUIVA!': 'DODGE!',
+      'Toca a un lado o a otro para saltar ahí': 'Tap either side to jump there',
+      'HOY: «UN HUEVO CON MUCHA SUERTE»': 'TODAY: “ONE VERY LUCKY EGG”',
+      '¡ENTERO!': 'SAFE!',
+
+      'BUENAS NOCHES': 'GOOD NIGHT',
+      '¿CUÁNTAS?': 'HOW MANY?',
+      'Cuenta las ovejas (los lobos no) y toca el número': 'Count the sheep (not wolves) and tap the number',
+      'ANTES DE DORMIR: «CONTANDO OVEJAS»': 'BEDTIME: “COUNTING SHEEP”',
+      '¡ZZZ!': 'ZZZ!',
+
+      // --- lo que hay escrito en los decorados -----------------------------------------------------------------
+      'SE BUSCA': 'WANTED',
+      'VIVA O ABOLLADA': 'ALIVE OR DENTED',
+      'APLAUSOS': 'APPLAUSE',
+      '¡YA!': 'GO!',
+      '¡SOLO HOY!': 'TODAY ONLY',
+      '9,99': '9.99',
+
+      // --- gritos de los canales -------------------------------------------------------------------------------
+      '¡UY!': 'OOF!',
+      '¡CLAVADO!': 'NAILED!',
+      '¡BIEN!': 'NICE!',
+      'JUSTITO': 'BARELY',
+      '¿EH?': 'HUH?',
+      '¡SE VA!': 'GONE!',
+      '¡FUERA!': 'SHOO!',
+      '¡PLENO!': 'BINGO!',
+      '¡PAM!': 'POW!',
+      '¡LA GALLINA NO!': 'NOT THE HEN!',
+      '¡SE ESCAPA!': 'GOT AWAY!',
+      'SIN BALAS': 'NO AMMO',
+      '¡ANTES DE TIEMPO!': 'TOO EARLY!',
+      '¡A MEDIDA!': 'PERFECT!',
+      '¡TE PASASTE!': 'TOO MUCH!',
+      '¡SERVIDO!': 'SERVED!',
+      '¡QUÉ POCO!': 'SO LITTLE!',
+      '¡SE DERRAMA!': 'SPILLED!',
+      '¡CASI!': 'CLOSE!',
+      '¡QUÉ BESTIA!': 'EASY, TIGER!',
+      '¡FLOJO!': 'WEAK!',
+      '¡DELICIOSO!': 'DELICIOUS!',
+      '¡A LA LENGUA!': 'GOTCHA!',
+      '¡ESA NO!': 'WRONG!',
+      '¡BOM!': 'BOOM!',
+      '¡SE FUE!': 'MISSED!',
+      '¡SE ESCURRE!': 'SLIPPING!',
+      '¡ACHÍS!': 'ACHOO!',
+      '¡NI CON NIVEL!': 'DEAD LEVEL!',
+      '¡CASI RECTO!': 'ALMOST!',
+      '¡TORCIDO!': 'CROOKED!',
+      '¡AHÍ ESTÁ!': 'FOUND IT!',
+      '¡AHÍ NO!': 'NOPE!',
+      '¡MUY TARDE!': 'TOO LATE!',
+      '¡AY!': 'OW!',
+      '¡BALONAZO!': 'BONK!',
+      '¡CARRERA LIMPIA!': 'CLEAN RUN!',
+      '¡TE VIO!': 'SPOTTED!',
+      '¡GALLETAS!': 'COOKIES!',
+      '¡NI SE ENTERA!': 'NOT A CLUE!',
+      '¡PLAF!': 'SPLAT!',
+      '¡REFLEJOS!': 'REFLEXES!',
+      '¡UF!': 'PHEW',
+      '¿CUÁNTAS OVEJAS?': 'HOW MANY SHEEP?',
+      '¡A DORMIR!': 'GOODNIGHT!',
+      '¡POR UNA!': 'SO CLOSE!',
+      '¡TE HAS LIADO!': 'LOST COUNT!',
+      '¡TE DORMISTE!': 'DOZED OFF!',
+    },
+
+    patrones: [
+      // título, placas y vestuario
+      [/^Cuota: (\d+),(\d) % · (\d+) zkcoins de prueba$/, 'Share: $1.$2% · $3 test zkcoins'],
+      [/^Cuota: (\d+),(\d) % · (\d+) zk$/, 'Share: $1.$2% · $3 zk'],
+      [/^(\d+) zkcoins de prueba$/, '$1 test zkcoins'],
+      [/^A (\d) CANALES$/, '$1 CHANNELS'],
+      [/^PRUEBA DE ASPECTO · (.+)$/, 'LOOK TEST · $1'],
+      [/^Te faltan (\d+) zkcoins$/, 'Need $1 more zkcoins'],
+      // canales y ensayo
+      [/^MEJOR MARCA: (\d+)$/, 'BEST: $1'],
+      [/^NIVEL (\d) · MEJOR MARCA: (\d+)$/, 'LEVEL $1 · BEST: $2'],
+      [/^NIVEL (\d)$/, 'LEVEL $1'],
+      [/^CANAL (\d+)$/, 'CH $1'],
+      [/^CANAL (\d+) · (.+)$/, (m, n, nombre) => 'CH ' + n + ' · ' + tr(nombre)],
+      // búsqueda, sala y códigos
+      [/^BUSCANDO RIVAL(\.+)$/, 'FINDING RIVAL$1'],
+      [/^CONECTANDO(\.+)$/, 'CONNECTING$1'],
+      [/^Apuesta: (\d+) zk\. Buscando a alguien en directo…$/, 'Bet: $1 zk. Looking for someone live…'],
+      [/^Tus puntos: (.+)$/, 'Your score: $1'],
+      [/^te reta a (tres|cinco) canales$/, (m, n) => 'wants a ' + (n === 'cinco' ? 5 : 3) + '-channel duel'],
+      [/^(Tres|Cinco) canales seguidos\. Después juega JUGADOR 2\.$/, (m, n) => (n === 'Cinco' ? 'Five' : 'Three') + ' channels in a row. Then PLAYER 2 plays.'],
+      [/^Tu otra pestaña · (.+)$/, (m, estado) => 'Your other tab · ' + tr(estado)],
+      [/^Te ven como (.+)$/, 'Your name: $1'],
+      // resultado del duelo
+      [/^(\d+)–(\d+) en canales · ([+-]?\d+) zkcoins de prueba$/, 'Channels $1–$2 · $3 test zkcoins'],
+      [/^(\d+)–(\d+) en canales · cuota de pantalla (\d+),(\d) %( [▲▼])?$/, 'Channels $1–$2 · audience share $3.$4%$5'],
+      [/^(\d+)–(\d+) en canales · contra ti la cuota no cambia$/, 'Channels $1–$2 · share unchanged vs myself'],
+      [/^(\d+)–(\d+) en canales · contra el reto de (.+)$/, (m, a, b, nombre) => 'Channels ' + a + '–' + b + ' · vs ' + tr(nombre) + "'s challenge"],
+      [/^(\d+)–(\d+) en canales · en directo contra (.+)$/, (m, a, b, nombre) => 'Channels ' + a + '–' + b + ' · live vs ' + tr(nombre)],
+      [/^Canales ganados · Jugador 1: (\d+) · Jugador 2: (\d+)$/, 'Channels won · Player 1: $1 · Player 2: $2'],
+      // gritos con números
+      [/^¡(RAYO|VALE|PACHORRA)! (\d+),(\d+) s$/, (m, grito, a, b) => ({ RAYO: 'FLASH!', VALE: 'OK!', PACHORRA: 'SLOWPOKE!' })[grito] + ' ' + a + '.' + b + ' s'],
+      [/^¡(\d+) SEGUIDAS!$/, '$1 IN A ROW!'],
+    ],
+  };
+})();
+//# sourceURL=zz/idiomas/en.js
+</script>
+<script>
 /* ZikZak · tele
    El marco común: el aparato, la mecha de la cuenta atrás, las placas de los jugadores,
    la nieve del zapeo, la orden en letras gordas y los rótulos. */
@@ -5185,7 +5598,7 @@
   };
 
   // --- mi estado: siempre entero, nunca a trozos ---------------------------------------
-  const CLAVES = ['v', 'alias', 'pinta', 'est', 'a', 'd', 'i', 'f', 'p', 'm', 'r', 'n'];
+  const CLAVES = ['v', 'alias', 'pinta', 'est', 'a', 'd', 'i', 'f', 'p', 'm', 'r', 'n', 'g'];
   let ultimo = '';
   R.pon = function (patch) {
     Object.assign(R.yo, patch);
@@ -5209,7 +5622,7 @@
       peer: String(p.peer), otra: !!p.isMe, alias: limpia(q.alias), pinta: ent(q.pinta, 0, 4, 0),
       est: ['menu', 'sala', 'reto', 'duelo'].indexOf(q.est) >= 0 ? q.est : 'menu',
       a: typeof q.a === 'string' ? q.a.slice(0, 64) : null,
-      i: ent(q.i, 0, 5, 0), n: q.n === 5 ? 5 : 3, f: ['espera', 'listo', 'juego', 'hecho'].indexOf(q.f) >= 0 ? q.f : 'espera',
+      i: ent(q.i, 0, 5, 0), n: q.n === 5 ? 5 : 3, g: ent(q.g, 0, 4, 0), f: ['espera', 'listo', 'juego', 'hecho'].indexOf(q.f) >= 0 ? q.f : 'espera',
       p: ent(q.p, 0, 1000, 0),
       m: Array.isArray(q.m) && q.m.length === 2 ? [ent(q.m[0], 0, 1e6, 0), ent(q.m[1], -1, 1, 0)] : [0, 0],
       r: Array.isArray(q.r) ? q.r.slice(0, 5).map(v => ent(v, 0, 1000, 0)) : [],
@@ -5357,14 +5770,27 @@
     lee(k, def) { try { const v = localStorage.getItem('zz1_' + k); return v ? JSON.parse(v) : def; } catch (e) { return def; } },
     pon(k, v) { try { localStorage.setItem('zz1_' + k, JSON.stringify(v)); } catch (e) { /* sin sitio: se sigue sin guardar */ } },
   };
-  const perfil = Object.assign({ pinta: 0, cuota: 0.45, duelos: 0, ganados: 0, mudo: false, mejores: {}, vistos: {}, rondas: 3 }, guarda.lee('perfil', {}));
+  const perfil = Object.assign({ pinta: 0, cuota: 0.45, duelos: 0, ganados: 0, mudo: false, mejores: {}, vistos: {}, rondas: 3,
+    zk: 300, zkDia: '', mesa: 0, apDia: '', apN: 0, ropa: [], puesto: null, idioma: '' }, guarda.lee('perfil', {}));
   if (perfil.rondas !== 5) perfil.rondas = 3;      // duelos a 3 o a 5 canales
+  if (!Array.isArray(perfil.ropa)) perfil.ropa = [];
+  if (!perfil.idioma) perfil.idioma = /^es/i.test(navigator.language || 'es') ? 'es' : 'en';
+  ZZ.ponIdioma(perfil.idioma);
+  // Monedero de prueba: zkcoins que solo viven en este móvil y no valen nada. 300 de bienvenida y 100 cada día.
+  const MESAS = [0, 10, 50], COMISION = 0.05, APUESTAS_DIA = 10;
+  function bonoDiario() {
+    const hoy = new Date().toISOString().slice(0, 10);
+    if (perfil.zkDia === hoy) return;
+    if (perfil.zkDia) { perfil.zk += 100; A.bono = A.t; }
+    perfil.zkDia = hoy; perfil.apN = 0;
+    guardaPerfil();
+  }
   const guardaPerfil = () => guarda.pon('perfil', perfil);
   son.pon(perfil.mudo);
   // lo que los demás ven de mí en la sala: un nombre de la casa (sin datos personales) y mi pinta
   const red = ZZ.red;
   if (!perfil.alias) { perfil.alias = red.aliasNuevo(); guardaPerfil(); }
-  const publica = patch => red.pon(Object.assign({ v: 1, alias: perfil.alias, pinta: perfil.pinta, n: perfil.rondas }, patch || {}));
+  const publica = patch => red.pon(Object.assign({ v: 1, alias: perfil.alias, pinta: perfil.pinta, n: perfil.rondas, g: P.ROPA.findIndex(r => r.id === perfil.puesto) + 1 }, patch || {}));
   const aliasLimpio = t => String(t || '').toUpperCase().replace(/[^A-ZÁÉÍÓÚÜÑ0-9 ]/g, '').slice(0, 14) || 'ALGUIEN';
   // El recuadro de texto de los códigos de reto: el único trozo de la página que no es lienzo,
   // porque copiar y pegar solo funciona de verdad en un campo de texto.
@@ -5373,6 +5799,13 @@
   cajaCod.setAttribute('aria-label', 'Código del reto');
   cajaCod.setAttribute('autocapitalize', 'off'); cajaCod.setAttribute('autocomplete', 'off');
   lienzo.parentNode.appendChild(cajaCod);
+  // Lo que no es lienzo también cambia de idioma: el de la página y las etiquetas para lectores de pantalla.
+  function rotulaPagina() {
+    document.documentElement.lang = ZZ.idioma;
+    lienzo.setAttribute('aria-label', ZZ.tr('ZikZak: duelos de minijuegos. Se juega tocando la pantalla.'));
+    cajaCod.setAttribute('aria-label', ZZ.tr('Código del reto'));
+  }
+  rotulaPagina();
   let cssCaja = '';
   function colocaCaja() {
     const ver = A.est === 'codListo' || A.est === 'codPega';
@@ -5397,7 +5830,11 @@
   };
   const EST = {};
   ZZ.depura = { pausa: false };
-  const miPinta = () => { const d = A.duelo; return P.PINTAS[(d && d.tipo === 'turnos' ? d.pintas[d.fase - 1] : perfil.pinta) % P.PINTAS.length]; };
+  const miPinta = () => {
+    const d = A.duelo;
+    if (d && d.tipo === 'turnos') return P.PINTAS[d.pintas[d.fase - 1] % P.PINTAS.length];
+    return P.conRopa(P.PINTAS[perfil.pinta % P.PINTAS.length], perfil.puesto);
+  };
   const yoNombre = () => (A.duelo && A.duelo.yoNombre) || 'TÚ';
   const coma = (v, d = 1) => v.toFixed(d).replace('.', ',');
   const cuotaTxt = c => coma(c * 40) + ' %';
@@ -5522,7 +5959,7 @@
   }
 
   // --- duelos y rondas -----------------------------------------------------------------------------
-  function creaDuelo(tipo) {
+  function creaDuelo(tipo, idFijo) {
     const ids = Object.keys(ZZ.canales);
     let d;
     const u = tipo === 'yo' ? guarda.lee('ultimo', null) : null;
@@ -5539,14 +5976,20 @@
       const niveles = perfil.rondas === 5 ? [n3[0], n3[1], n3[1], n3[2], n3[2]] : n3;
       const bar = ids.slice();
       for (let i = bar.length - 1; i > 0; i--) { const j = rng.entero(0, i); const x = bar[i]; bar[i] = bar[j]; bar[j] = x; }
-      const rondas = niveles.map((_, i) => {
-        const id = bar[i % bar.length], sem = (semilla + 7919 * (i + 1)) >>> 0, nivel = niveles[i];
+      // canal fijo: el mismo canal tres veces, cada una más difícil
+      const rondas = (idFijo ? [1, 2, 3] : niveles).map((nv, i) => {
+        const id = idFijo || bar[i % bar.length], sem = (semilla + 7919 * (i + 1)) >>> 0, nivel = nv;
         const dest = ZZ.lim(c + rng.campana() * 0.07, 0.08, 0.97);
         return { id, nivel, semilla: sem, grab: ZZ.grabaCasa(ZZ.canales[id], sem, nivel, dest).grab };
       });
       d = { tipo: 'casa', semilla, rondas, rival: { nombre: 'AJUSTE', etiqueta: 'RIVAL DE LA CASA', sub: 'Lo mueve un programa: no es una persona', aspecto: P.AJUSTE, color: T.VIOLETA } };
     }
     d.i = 0; d.res = []; d.pts = [];
+    d.fijo = idFijo || null; d.apuesta = 0;
+    // la apuesta sale del monedero al empezar: quien se va a medias, la pierde
+    if (d.tipo === 'casa' && perfil.mesa > 0 && perfil.zk >= perfil.mesa && perfil.apN < APUESTAS_DIA) {
+      d.apuesta = perfil.mesa; perfil.zk -= d.apuesta; perfil.apN++; guardaPerfil();
+    }
     return d;
   }
   function creaEnsayo(id, nivel) {
@@ -5569,7 +6012,7 @@
   // En directo: cada uno en su móvil, con los mismos retos. `o` es lo que publica el otro.
   function creaVivo(def, o) {
     return { tipo: 'vivo', semilla: def.s, rondas: rondasDe(def), peer: o.peer, rv: o, visto: A.t, mSeq: o.m[0], misPts: [], i: 0, res: [], pts: [],
-      rival: { nombre: o.alias, etiqueta: 'EN DIRECTO', vivo: true, sub: 'Juega ahora mismo: desde su móvil', aspecto: P.PINTAS[o.pinta], color: T.ROJO } };
+      rival: { nombre: o.alias, etiqueta: 'EN DIRECTO', vivo: true, sub: 'Juega ahora mismo: desde su móvil', aspecto: P.conRopa(P.PINTAS[o.pinta], o.g ? P.ROPA[o.g - 1].id : null), color: T.ROJO } };
   }
   // A distancia: quien crea el reto juega solo y se lleva un código; quien lo pega juega contra esa partida.
   function creaReto() { const def = defVivo(); return { tipo: 'reto', semilla: def.s, rondas: rondasDe(def), rival: null, i: 0, res: [], pts: [] }; }
@@ -5653,14 +6096,19 @@
     const tot = d.pts.reduce((a, p) => [a[0] + p[0], a[1] + p[1]], [0, 0]);
     const gana = mias !== suyas ? Math.sign(mias - suyas) : Math.sign(tot[0] - tot[1]);
     const antes = perfil.cuota;
+    let zkNeto = 0;
     if (d.tipo === 'casa' || d.tipo === 'yo') {
       perfil.duelos++;
       if (gana > 0) perfil.ganados++;
       if (d.tipo === 'casa') perfil.cuota = ZZ.lim(perfil.cuota + gana * 0.06, 0.1, 0.95);
+      if (d.apuesta) {      // quien gana se lleva el bote menos la comisión; en empate se devuelve
+        zkNeto = gana > 0 ? Math.round(d.apuesta * 2 * (1 - COMISION)) - d.apuesta : gana === 0 ? 0 : -d.apuesta;
+        perfil.zk += d.apuesta + zkNeto;
+      }
       guardaPerfil();
       guarda.pon('ultimo', { semilla: d.semilla, pinta: perfil.pinta, rondas: d.rondas.map(r => ({ id: r.id, nivel: r.nivel, semilla: r.semilla, grab: r.mia })) });
     }
-    A.final = { gana, mias, suyas, tot, antes, ahora: perfil.cuota };
+    A.final = { gana, mias, suyas, tot, antes, ahora: perfil.cuota, zk: zkNeto, apuesta: d.apuesta || 0 };
     ir('final');
   }
 
@@ -5684,6 +6132,7 @@
 
   // Texto en varias líneas.
   function parrafo(gg, txt, x, y, ancho, tam, color, centrado) {
+    txt = ZZ.tr(txt);
     gg.save(); gg.font = '700 ' + tam + 'px ' + T.F_UI;
     const lineas = [];
     let ln = '';
@@ -5743,34 +6192,52 @@
   function cambiaPinta() { perfil.pinta = (perfil.pinta + 1) % P.PINTAS.length; guardaPerfil(); son.cara(); animo('yo', 1); publica({}); }
   function miPlaca(gg, L, conBoton) {
     const m = medidasPlacas(L);
-    TV.placa(gg, 30, m.yB, 660, m.hB, { nombre: 'TÚ', sub: 'Cuota de pantalla: ' + cuotaTxt(perfil.cuota), aspecto: miPinta(), expr: exprDe('yo', 'neutro'), t: A.t, golpe: A.caras.yo.golpe, color: T.AZUL, puntos: null });
+    // con el botón del vestuario al lado no cabe el texto entero: se abrevia para que no quede debajo
+    TV.placa(gg, 30, m.yB, 660, m.hB, { nombre: 'TÚ', sub: 'Cuota: ' + cuotaTxt(perfil.cuota) + ' · ' + perfil.zk + (conBoton ? ' zk' : ' zkcoins de prueba'), aspecto: miPinta(), expr: exprDe('yo', 'neutro'), t: A.t, golpe: A.caras.yo.golpe, color: T.AZUL, puntos: null });
     if (conBoton) {
       zona('pinta0', 30, m.yB, 300, m.hB, cambiaPinta);
       const bh = Math.min(58, m.hB * 0.5);
-      boton(gg, 'pinta', 452, m.yB + (m.hB - bh) / 2 - 5, 222, bh, 'CAMBIAR PINTA', T.AMARILLO, cambiaPinta, { tam: 21, fuera: true, ctxt: T.TINTA, fuente: T.F_UI, peso: 900 });
+      boton(gg, 'pinta', 452, m.yB + (m.hB - bh) / 2 - 5, 222, bh, 'VESTUARIO', T.AMARILLO, () => ir('vestuario'), { tam: 21, fuera: true, ctxt: T.TINTA, fuente: T.F_UI, peso: 900 });
     }
   }
   EST.titulo = {
-    entra() { A.color = T.VIOLETA; A.duelo = null; A.ronda = null; publica({ est: 'menu', a: null, d: null, i: 0, f: 'espera', p: 0, r: [], m: [0, 0] }); },
+    entra() { A.color = T.VIOLETA; A.duelo = null; A.ronda = null; bonoDiario(); publica({ est: 'menu', a: null, d: null, i: 0, f: 'espera', p: 0, r: [], m: [0, 0] }); },
     pinta(gg) {
       fondoPantalla(gg, T.VIOLETA, 320, 250);
-      logo(gg, 316, 226, 0.82, A.t);
-      P.busto(gg, 606, 432 + Math.sin(A.t * 0.05) * 4, 0.88, P.AJUSTE, 'contento', A.t, { ladeo: -0.3 });
+      logo(gg, 316, 204, 0.74, A.t);
+      P.busto(gg, 606, 396 + Math.sin(A.t * 0.05) * 4, 0.84, P.AJUSTE, 'contento', A.t, { ladeo: -0.3 });
       for (const nn of [3, 5]) {
         const sel = perfil.rondas === nn;
-        boton(gg, 'n' + nn, nn === 3 ? 100 : 326, 408, 214, 62, 'A ' + nn + ' CANALES', sel ? T.AMARILLO : T.mezcla(T.PAPEL, T.TINTA, 0.4),
-          () => { perfil.rondas = nn; guardaPerfil(); publica({}); }, { tam: 22, ctxt: T.TINTA, fuente: T.F_UI, peso: 900 });
+        boton(gg, 'n' + nn, nn === 3 ? 100 : 326, 372, 214, 54, 'A ' + nn + ' CANALES', sel ? T.AMARILLO : T.mezcla(T.PAPEL, T.TINTA, 0.4),
+          () => { perfil.rondas = nn; guardaPerfil(); publica({}); }, { tam: 21, ctxt: T.TINTA, fuente: T.F_UI, peso: 900 });
       }
-      boton(gg, 'duelo', 100, 494, 440, 100, '¡A ZAPEAR!', T.ROJO, () => { A.duelo = creaDuelo('casa'); ir('buscando'); }, { tam: 52 });
+      // la mesa: cuánto se apuesta contra la casa, con zkcoins de prueba
+      const sinCupo = perfil.apN >= APUESTAS_DIA;
+      MESAS.forEach((m, i) => {
+        const puede = m === 0 || (perfil.zk >= m && !sinCupo), sel = perfil.mesa === m && puede;
+        if (perfil.mesa === m && !puede) perfil.mesa = 0;
+        boton(gg, 'mesa' + m, 100 + i * 150, 436, 140, 54, m ? m + ' zk' : 'GRATIS', sel ? T.AMARILLO : T.mezcla(T.PAPEL, T.TINTA, puede ? 0.4 : 0.62),
+          () => { if (puede) { perfil.mesa = m; guardaPerfil(); } else { A.aviso = { txt: sinCupo ? 'Hoy ya no quedan duelos con apuesta' : 'No te llega para esa mesa', t: A.t }; son.fallo(); } },
+          { tam: 21, ctxt: T.TINTA, fuente: T.F_UI, peso: 900 });
+      });
+      boton(gg, 'duelo', 100, 502, 440, 88, '¡A ZAPEAR!', T.ROJO, () => { A.duelo = creaDuelo('casa'); ir('buscando'); }, { tam: 50 });
       // si alguien me reta desde su móvil, el botón lo avisa
       const yoPeer = red.miPeer(), meRetan = !!yoPeer && red.gente().some(o => o.est === 'reto' && o.a === yoPeer);
-      boton(gg, 'amigo', 100, 618, 440, 82, meRetan ? '¡TE RETAN!' : 'CON UN AMIGO', meRetan ? T.AMARILLO : T.VIOLETA, () => ir(meRetan ? 'sala' : 'amigo'), { tam: 36, ctxt: meRetan ? T.TINTA : undefined });
+      boton(gg, 'amigo', 100, 612, 440, 76, meRetan ? '¡TE RETAN!' : 'CON UN AMIGO', meRetan ? T.AMARILLO : T.VIOLETA, () => ir(meRetan ? 'sala' : 'amigo'), { tam: 34, ctxt: meRetan ? T.TINTA : undefined });
       const hay = !!guarda.lee('ultimo', null);
       if (hay) {
-        boton(gg, 'ensayo', 100, 724, 208, 72, 'ENSAYO', T.AZUL, () => ir('ensayo'), { tam: 30 });
-        boton(gg, 'contrati', 332, 724, 208, 72, 'CONTRA TI', T.MENTA, () => { A.duelo = creaDuelo('yo'); ir('buscando'); }, { tam: 24 });
+        boton(gg, 'ensayo', 100, 710, 208, 70, 'CANALES', T.AZUL, () => ir('ensayo'), { tam: 28 });
+        boton(gg, 'contrati', 332, 710, 208, 70, 'CONTRA TI', T.MENTA, () => { A.duelo = creaDuelo('yo'); ir('buscando'); }, { tam: 24 });
       } else {
-        boton(gg, 'ensayo', 100, 724, 440, 72, 'ENSAYO', T.AZUL, () => ir('ensayo'), { tam: 32 });
+        boton(gg, 'ensayo', 100, 710, 440, 70, 'CANALES', T.AZUL, () => ir('ensayo'), { tam: 32 });
+      }
+      // avisos: el regalo del día y los «no puedes»
+      const av = A.aviso && A.t - A.aviso.t < 150 ? A.aviso.txt : A.bono !== undefined && A.t - A.bono < 240 ? '+100 zkcoins de hoy' : null;
+      if (av) {
+        const an = T.ancho(gg, av, 24, T.F_UI, 900) + 48;
+        T.rr(gg, 320 - an / 2 + 4, 24, an, 50, 16); T.pinta(gg, T.TINTA, 0);
+        T.rr(gg, 320 - an / 2, 18, an, 50, 16); T.pinta(gg, T.AMARILLO, 5);
+        T.texto(gg, av, 320, 44, 24, ui(T.TINTA));
       }
     },
     fuera(gg, L) {
@@ -5779,17 +6246,57 @@
       boton(gg, 'son', 610, yb, 80, 62, perfil.mudo ? 'NO' : 'SÍ', perfil.mudo ? T.mezcla(T.PAPEL, T.TINTA, 0.45) : T.AMARILLO,
         () => { perfil.mudo = !perfil.mudo; son.pon(perfil.mudo); guardaPerfil(); }, { tam: 25, fuera: true, ctxt: T.TINTA });
       T.texto(gg, 'SONIDO', 596, yb + 34, 21, ui(T.PAPEL, { al: 'right' }));
+      boton(gg, 'idioma', 392, yb, 84, 62, ZZ.idioma.toUpperCase(), T.PAPEL,
+        () => { const l = ['es'].concat(Object.keys(ZZ.idiomas)); perfil.idioma = l[(l.indexOf(ZZ.idioma) + 1) % l.length]; ZZ.ponIdioma(perfil.idioma); rotulaPagina(); guardaPerfil(); }, { tam: 25, fuera: true, ctxt: T.TINTA });
       miPlaca(gg, L, true);
     },
   };
 
   // --- ensayo ------------------------------------------------------------------------------------
+  // --- vestuario: la pinta y la primera ropa, que se compra con zkcoins de prueba ---------------------
+  EST.vestuario = {
+    entra() { A.color = T.VIOLETA; A.aviso = null; },
+    pinta(gg) {
+      fondoPantalla(gg, T.VIOLETA, 320, 250);
+      T.texto(gg, 'VESTUARIO', 320, 66, 60, { color: T.AMARILLO, w: 13 });
+      T.texto(gg, perfil.zk + ' zkcoins de prueba', 320, 120, 24, ui(T.PAPEL));
+      T.circ(gg, 326, 287, 130); T.pinta(gg, T.TINTA, 0);
+      T.circ(gg, 320, 278, 130); T.pinta(gg, '#2B2536', 7);
+      gg.save(); T.circ(gg, 320, 278, 126); gg.clip();
+      gg.fillStyle = T.trama(gg, '#463E62', 13, 2.8); gg.fillRect(180, 140, 280, 280);
+      P.busto(gg, 320, 306, 1.4, miPinta(), 'contento', A.t);
+      gg.restore();
+      T.circ(gg, 320, 278, 130); T.linea(gg, 7);
+      boton(gg, 'pintaA', 56, 240, 100, 76, '<', T.AMARILLO, () => { perfil.pinta = (perfil.pinta + P.PINTAS.length - 1) % P.PINTAS.length; guardaPerfil(); son.cara(); publica({}); }, { tam: 44, ctxt: T.TINTA });
+      boton(gg, 'pintaB', 484, 240, 100, 76, '>', T.AMARILLO, cambiaPinta, { tam: 44, ctxt: T.TINTA });
+      P.ROPA.forEach((r, i) => {
+        const x = 36 + (i % 2) * 292, y = 440 + Math.floor(i / 2) * 132, mia = perfil.ropa.indexOf(r.id) >= 0, puesta = perfil.puesto === r.id;
+        T.rr(gg, x + 5, y + 8, 276, 116, 20); T.pinta(gg, T.TINTA, 5);
+        T.rr(gg, x, y, 276, 116, 20); T.pinta(gg, puesta ? T.AMARILLO : T.PAPEL, 5);
+        const eg = 0.76 * (r.esc || 1);      // el gorro ancho se encoge para no salirse de su tarjeta
+        gg.save(); gg.translate(x + 62, y + 140); gg.scale(eg, eg); P.gorroSuelto(gg, r.id); gg.restore();
+        // el nombre se encoge si no cabe entre el gorro y el borde
+        T.texto(gg, r.nombre, x + 124, y + 30, Math.min(19, 19 * 138 / T.ancho(gg, r.nombre, 19, T.F_UI, 900)), ui(T.TINTA, { al: 'left' }));
+        boton(gg, 'ropa' + i, x + 122, y + 52, 142, 50, puesta ? 'QUITAR' : mia ? 'PONER' : r.precio + ' zk', puesta ? T.TINTA : mia ? T.MENTA : perfil.zk >= r.precio ? T.ROJO : T.mezcla(T.PAPEL, T.TINTA, 0.45), () => {
+          if (puesta) perfil.puesto = null;
+          else if (mia) perfil.puesto = r.id;
+          else if (perfil.zk >= r.precio) { perfil.zk -= r.precio; perfil.ropa.push(r.id); perfil.puesto = r.id; son.gana(); animo('yo', 1); }
+          else { A.aviso = { txt: 'Te faltan ' + (r.precio - perfil.zk) + ' zkcoins', t: A.t }; son.fallo(); }
+          guardaPerfil(); publica({});
+        }, { tam: 21 });
+      });
+      if (A.aviso && A.t - A.aviso.t < 150) T.texto(gg, A.aviso.txt, 320, 420, 24, ui(T.AMARILLO));
+      boton(gg, 'volver', 220, 736, 200, 62, 'VOLVER', T.TINTA, () => ir('titulo'), { tam: 26 });
+    },
+    fuera(gg, L) { miPlaca(gg, L, false); },
+  };
+
   EST.ensayo = {
     entra() { A.color = T.AZUL; A.duelo = null; A.ronda = null; A.ensayoScroll = 0; A.ensayoMaxScroll = 0; A.ensayoDedo = null; },
     pinta(gg) {
       fondoPantalla(gg, T.AZUL, 320, 90);
-      T.texto(gg, 'ENSAYO', 320, 86, 84, { color: T.AMARILLO, w: 15 });
-      T.texto(gg, 'Sin rival y sin apuesta. Elige canal y nivel.', 320, 158, 24, ui(T.PAPEL, { peso: 700 }));
+      T.texto(gg, 'CANALES', 320, 86, 80, { color: T.AMARILLO, w: 15 });
+      T.texto(gg, 'Ensaya un nivel o juégate el canal fijo.', 320, 158, 24, ui(T.PAPEL, { peso: 700 }));
       const ids = Object.keys(ZZ.canales).sort((a, b) => ZZ.canales[a].num - ZZ.canales[b].num);
       const maxScroll = Math.max(0, 200 + Math.max(0, ids.length - 1) * 172 + 150 - 690);
       A.ensayoMaxScroll = maxScroll;
@@ -5804,7 +6311,8 @@
         T.texto(gg, c.nombre, 146, y + 44, 30, { al: 'left', color: T.TINTA, w: 0 });
         T.texto(gg, c.orden, 146, y + 86, 26, ui(T.mezcla(c.color, T.TINTA, 0.25), { al: 'left' }));
         const mej = Math.max(0, ...[1, 2, 3].map(n => perfil.mejores[id + n] || 0));
-        T.texto(gg, mej ? 'MEJOR MARCA: ' + mej : 'SIN MARCA TODAVÍA', 596, y + 128, 20, ui(mej ? T.TINTA : T.mezcla(T.PAPEL, T.TINTA, 0.5), { al: 'right' }));
+        T.texto(gg, mej ? 'MEJOR MARCA: ' + mej : 'SIN MARCA TODAVÍA', 146, y + 124, 17, ui(mej ? T.TINTA : T.mezcla(T.PAPEL, T.TINTA, 0.5), { al: 'left' }));
+        boton(gg, 'fijo' + id, 356, y + 100, 238, 40, 'CANAL FIJO', T.VIOLETA, () => { A.duelo = creaDuelo('casa', id); ir('buscando'); }, { tam: 20 });
         [1, 2, 3].forEach(n => {
           boton(gg, 'en' + id + n, 356 + (n - 1) * 84, y + 22, 70, 70, String(n), [T.MENTA, T.AMARILLO, T.ROJO][n - 1],
             () => { A.duelo = creaEnsayo(id, n); empiezaRonda(); }, { tam: 40 });
@@ -5857,7 +6365,7 @@
         gg.restore(); T.circ(gg, cx, cy, 146); T.linea(gg, 7);
         if (A.te < F_NADIE) {
           T.texto(gg, 'MESA DE PRUEBA', 320, 640, 44, { color: T.PAPEL });
-          T.texto(gg, 'Sin apuesta. Buscando a alguien en directo…', 320, 704, 24, ui(T.PAPEL, { peso: 700 }));
+          T.texto(gg, d.apuesta ? 'Apuesta: ' + d.apuesta + ' zk. Buscando a alguien en directo…' : 'Sin apuesta. Buscando a alguien en directo…', 320, 704, 24, ui(T.PAPEL, { peso: 700 }));
         } else {
           TV.sello(gg, 'NADIE EN DIRECTO', 320, 640, 46, T.ROJO, (A.te - F_NADIE) / 8);
           T.texto(gg, 'Juegas contra Ajuste, el rival de la casa', 320, 730, 24, ui(T.PAPEL, { peso: 700 }));
@@ -6176,7 +6684,7 @@
   EST.codPega = {
     entra() {
       A.color = T.MENTA; A.duelo = null; A.ronda = null; A.reto = null; A.codVisto = '';
-      cajaCod.readOnly = false; cajaCod.value = ''; cajaCod.placeholder = 'Mantén pulsado aquí y pega el código';
+      cajaCod.readOnly = false; cajaCod.value = ''; cajaCod.placeholder = ZZ.tr('Mantén pulsado aquí y pega el código');
     },
     tic() { const v = cajaCod.value; if (v !== A.codVisto) { A.codVisto = v; A.reto = v ? ZZ.codigo.lee(v) : null; } },
     pinta(gg) {
@@ -6342,7 +6850,8 @@
         }
       });
       const sube = f.ahora - f.antes, mar = f.mias + '–' + f.suyas + ' en canales';
-      const linea = d.tipo === 'casa' ? mar + ' · cuota de pantalla ' + cuotaTxt(f.ahora) + (sube > 0 ? ' ▲' : sube < 0 ? ' ▼' : '')
+      const linea = d.tipo === 'casa' && f.apuesta ? mar + ' · ' + (f.zk > 0 ? '+' : '') + f.zk + ' zkcoins de prueba'
+        : d.tipo === 'casa' ? mar + ' · cuota de pantalla ' + cuotaTxt(f.ahora) + (sube > 0 ? ' ▲' : sube < 0 ? ' ▼' : '')
         : d.tipo === 'yo' ? mar + ' · contra ti la cuota no cambia'
           : d.tipo === 'retado' ? mar + ' · contra el reto de ' + d.rival.nombre
           : turnos ? 'Canales ganados · Jugador 1: ' + f.suyas + ' · Jugador 2: ' + f.mias
@@ -6359,7 +6868,7 @@
           boton(gg, 'salaF', 36, 738, 340, 76, 'A LA SALA', T.ROJO, () => ir('sala'), { tam: 32 });
           boton(gg, 'menu', 396, 738, 210, 76, 'MENÚ', T.AZUL, () => ir('titulo'), { tam: 28 });
         } else {
-          boton(gg, 'revancha', 36, 738, 268, 76, 'OTRO DUELO', T.ROJO, () => { A.duelo = creaDuelo('casa'); ir('buscando'); }, { tam: 30 });
+          boton(gg, 'revancha', 36, 738, 268, 76, 'OTRO DUELO', T.ROJO, () => { A.duelo = creaDuelo('casa', d.fijo); ir('buscando'); }, { tam: 30 });
           boton(gg, 'contrati2', 320, 738, 186, 76, 'CONTRA TI', T.MENTA, () => { A.duelo = creaDuelo('yo'); ir('buscando'); }, { tam: 21 });
           boton(gg, 'menu', 522, 738, 84, 76, 'MENÚ', T.AZUL, () => ir('titulo'), { tam: 18 });
         }
@@ -6400,10 +6909,12 @@
       const h = Math.min(m.hT, 96), y = L.arriba - h - 22;
       T.rr(gg, 30, y + 9, 660, h, 26); T.pinta(gg, T.TINTA, 6);
       T.rr(gg, 30, y, 660, h, 26); T.pinta(gg, T.PAPEL, 6);
-      T.texto(gg, 'ENSAYO', 56, y + h / 2 + 2, Math.min(34, h * 0.4), { al: 'left', color: T.TINTA, w: 0 });
-      const an = T.ancho(gg, 'NIVEL ' + r.nivel, 22, T.F_UI, 900) + 36;
-      T.rr(gg, 236, y + h / 2 - 22, an, 44, 22); T.pinta(gg, T.TINTA, 0);
-      T.texto(gg, 'NIVEL ' + r.nivel, 236 + an / 2, y + h / 2 + 1, 22, ui(T.AMARILLO));
+      const te = Math.min(34, h * 0.4);
+      T.texto(gg, 'ENSAYO', 56, y + h / 2 + 2, te, { al: 'left', color: T.TINTA, w: 0 });
+      // la píldora del nivel va detrás de la palabra, mida lo que mida en cada idioma
+      const an = T.ancho(gg, 'NIVEL ' + r.nivel, 22, T.F_UI, 900) + 36, xp = Math.max(236, 56 + T.ancho(gg, 'ENSAYO', te) + 18);
+      T.rr(gg, xp, y + h / 2 - 22, an, 44, 22); T.pinta(gg, T.TINTA, 0);
+      T.texto(gg, 'NIVEL ' + r.nivel, xp + an / 2, y + h / 2 + 1, 22, ui(T.AMARILLO));
       const mej = perfil.mejores[r.canal.id + r.nivel] || 0;
       T.texto(gg, mej ? 'MEJOR MARCA: ' + mej : 'SIN MARCA TODAVÍA', 666, y + h / 2 + 1, 21, ui(T.TINTA, { al: 'right' }));
     }
